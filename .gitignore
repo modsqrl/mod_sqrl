@@ -3,8 +3,12 @@
 *.ko
 
 # Libraries
+.libs
 *.lib
 *.a
+*.la
+*.lo
+*.slo
 
 # Shared objects (inc. Windows DLLs)
 *.dll
