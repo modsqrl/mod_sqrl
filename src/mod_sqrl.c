@@ -14,14 +14,49 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#include <ap_provider.h>
-#include <httpd.h>
-#include <http_config.h>
-#include <http_log.h>
+#include "ap_config.h"
+#include "httpd.h"
+#include "http_config.h"
+#include "http_protocol.h"
+#include "http_log.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+
+typedef struct
+{
+} sqrl_config_rec;
+
+module AP_MODULE_DECLARE_DATA sqrl_module;
+
+static int authenticate_sqrl(request_rec * r)
+{
+    sqrl_config_rec *conf;
+    const char *hostname;
+    char *uri;
+
+    conf = ap_get_module_config(r->per_dir_config, &sqrl_module);
+
+    if (!r->handler || (strcmp(r->handler, "sqrl") != 0)) {
+        return DECLINED;
+    }
+
+    if (r->method_number != M_GET) {
+        return HTTP_METHOD_NOT_ALLOWED;
+    }
+
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "Verifying SQRL code ...");
+
+    hostname = r->hostname;
+    uri = r->unparsed_uri;
+
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "hostname = %s", hostname);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "uri = %s", uri);
+
+    ap_set_content_type(r, "text/plain;charset=us-ascii");
+    ap_rprintf(r, "hostname = %s\nuri = %s", hostname, uri);
+
+    return OK;
+}
+
 
 /*
  * Configuration
@@ -36,23 +71,18 @@ static const command_rec configuration_cmds[] = {
  */
 
 /* Register mod_sqrl with Apache */
-static void register_hooks(apr_pool_t *pool)
+static void register_hooks(apr_pool_t * pool)
 {
+    ap_hook_handler(authenticate_sqrl, NULL, NULL, APR_HOOK_MIDDLE);
 }
 
 /* Module Data Structure */
 module AP_MODULE_DECLARE_DATA sqrl_module = {
     STANDARD20_MODULE_STUFF,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    configuration_cmds,
-    register_hooks
+    NULL,                       /* create per-directory configuration record */
+    NULL,                       /* merge per-directory configuration records */
+    NULL,                       /* create per-server configuration record */
+    NULL,                       /* merge per-server configuration records */
+    configuration_cmds,         /* configuration directives */
+    register_hooks              /* register modules functions with the core */
 };
-
-
-#ifdef __cplusplus
-}
-#endif
-
