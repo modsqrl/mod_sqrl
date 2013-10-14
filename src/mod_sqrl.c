@@ -86,6 +86,53 @@ static apr_hash_t *parse_form_data(apr_pool_t * pool, char *str, int limit)
     return form;
 }
 
+/**
+ * Read data from the request body.
+ * @param r Request to read from.
+ * @param body On return, data read from the request
+ *             (allocated from the request's pool).
+ * @param limit The maxium number of bytes to read from the request body.
+ * @return The number of bytes read from the request body.
+ */
+static apr_size_t read_body(request_rec * r, char **body, apr_size_t limit)
+{
+    apr_status_t status;
+    apr_size_t bytes,           /* Bytes remaining in body buffer
+                                 * and bytes read from the brigade */
+               count = 0;       /* Bytes read count */
+    apr_bucket_brigade *bb;
+
+    /* Allocate the body buffer */
+    *body = apr_palloc(r->pool, limit + 1);
+
+    /* Create a brigade to pull in data from the input filters */
+    bb = apr_brigade_create(r->pool, r->connection->bucket_alloc);
+
+    /* Read data from input filters */
+    do {
+        /* Get the brigade from the input filters */
+        status = ap_get_brigade(r->input_filters, bb, AP_MODE_READBYTES,
+                                APR_BLOCK_READ, limit);
+        if (status == APR_SUCCESS) {
+            /* Read data from the brigade */
+            bytes = limit - count;
+            status = apr_brigade_flatten(bb, (*body) + count, &bytes);
+            if (status != APR_SUCCESS) {
+                ap_log_rerror(APLOG_MARK, LOG_DEBUG, status, r, "reading bb");
+            }
+            count += bytes;
+        }
+
+        /* Discard the data */
+        apr_brigade_cleanup(bb);
+    } while ((status == APR_SUCCESS) && (count < limit));
+
+    /* NULL terminate */
+    body[count] = '\0';
+
+    return count;
+}
+
 typedef struct
 {
 } sqrl_config_rec;
@@ -97,10 +144,14 @@ static int authenticate_sqrl(request_rec * r)
     sqrl_config_rec *conf;
     const char *hostname;
     char *uri;
-    apr_hash_t *params;
-    apr_hash_index_t *param;
-    const char *key;
-    apr_array_header_t *values;
+    char *body;
+    apr_size_t limit = 2048;    /* The body's maximum size, in bytes */
+    apr_size_t clen;            /* Content length */
+    apr_size_t blen;            /* Body length */
+    apr_hash_t *params;         /* Parsed parameters */
+    apr_hash_index_t *param;    /* Current parameter */
+    const char *key;            /* Parameter key */
+    apr_array_header_t *values; /* Parameter value */
 
     conf = ap_get_module_config(r->per_dir_config, &sqrl_module);
 
@@ -108,7 +159,7 @@ static int authenticate_sqrl(request_rec * r)
         return DECLINED;
     }
 
-    if (r->method_number != M_GET) {
+    if (r->method_number != M_POST) {
         return HTTP_METHOD_NOT_ALLOWED;
     }
 
@@ -118,15 +169,54 @@ static int authenticate_sqrl(request_rec * r)
     uri = r->unparsed_uri;
     params = parse_form_data(r->pool, r->args, 10);
 
+    {
+        /* Get the Content-Length header */
+        const char *length = apr_table_get(r->headers_in, "Content-Length");
+
+        if (length != NULL) {
+            /* Convert to long */
+            clen = strtol(length, NULL, 0);
+            /* Reject if it's too large */
+            if (clen > limit) {
+                ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
+                              "Request is too large (%d/%d)", clen, limit);
+                return HTTP_REQUEST_ENTITY_TOO_LARGE;
+
+            }
+        }
+        else {
+            /* Unknown size, set length to the max */
+            clen = limit;
+        }
+    }
+    blen = read_body(r, &body, clen);
+
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "hostname = %s", hostname);
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "uri = %s", uri);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "blen = %d", blen);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "body = %s", body);
 
     ap_set_content_type(r, "text/html;charset=us-ascii");
     ap_rprintf(r,
                "<!DOCTYPE html>\n<html>\n<head><title>SQRL</title></head>\n"
-               "<body>\nhostname = %s<br/>\nuri = %s<br/><br/>\n"
+               "<body>\n<pre>hostname = %s</pre>\n<pre>uri = %s</pre><br/>\n"
                "<table>\n<caption>Querystring</caption>\n", hostname, uri);
 
+    for (param = apr_hash_first(r->pool, params); param != NULL;
+         param = apr_hash_next(param)) {
+        int i;
+        apr_hash_this(param, (const void **) &key, NULL, (void *) &values);
+        for (i = 0; i < values->nelts; ++i) {
+            ap_rprintf(r, "<tr><td>%s</td><td>%s</td></tr>\n", key,
+                       APR_ARRAY_IDX(values, i, char *));
+        }
+    }
+
+    ap_rprintf(r,
+               "</table>\n<br/><pre>body = %s</pre><br/>\n"
+               "<table>\n<caption>Body</caption>\n", body);
+
+    params = parse_form_data(r->pool, body, 10);
     for (param = apr_hash_first(r->pool, params); param != NULL;
          param = apr_hash_next(param)) {
         int i;
