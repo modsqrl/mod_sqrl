@@ -15,14 +15,19 @@ limitations under the License.
 */
 
 #include "string.h"
-#include "ap_config.h"
 #include "httpd.h"
 #include "http_config.h"
 #include "http_protocol.h"
 #include "http_log.h"
+#include "ap_config.h"
 #include "apr_hash.h"
+#include "apr_optional.h"
 #include "apr_strings.h"
+#include "mod_include.h"
 
+static APR_OPTIONAL_FN_TYPE(ap_register_include_handler) * sqrl_reg_ssi;
+     static APR_OPTIONAL_FN_TYPE(ap_ssi_get_tag_and_value) *
+    sqrl_get_tag_and_value;
 
 /**
  * Parse application/x-www-form-urlencoded form data from a string.
@@ -32,7 +37,8 @@ limitations under the License.
  * @return Hashtable of parsed parameters. Because a key can have multiple
  *         values, the hashtable value is an array of parameter values.
  */
-static apr_hash_t *parse_form_data(apr_pool_t * pool, char *str, int limit)
+     static apr_hash_t *parse_form_data(apr_pool_t * pool, char *str,
+                                        int limit)
 {
     apr_hash_t *form;
     apr_array_header_t *values;
@@ -135,7 +141,34 @@ static apr_size_t read_body(request_rec * r, char **body, apr_size_t limit)
 
 typedef struct
 {
+    const char *session_id;
+    const char *url;
+} sqrl_rec;
+
+typedef struct
+{
 } sqrl_config_rec;
+
+
+/*
+ * SQRL functions
+ */
+
+static sqrl_rec *generate_sqrl(request_rec * r)
+{
+    sqrl_rec *sqrl = apr_palloc(r->pool, sizeof(sqrl_rec));
+
+    /* TODO generate sqrl */
+    sqrl->session_id = "abcdefg";
+    sqrl->url = "sqrl://sample/path?query=string";
+
+    return sqrl;
+}
+
+
+/*
+ * SQRL Authentication handler
+ */
 
 module AP_MODULE_DECLARE_DATA sqrl_module;
 
@@ -232,6 +265,89 @@ static int authenticate_sqrl(request_rec * r)
     return OK;
 }
 
+/*
+ * mod_include extention.
+ */
+
+/**
+ * Generate a SQRL URL and add to the SSI environment.
+ * Example:
+ * <!--#sqrl_gen url="sqrl_url" session_id="sqrl_id" -->
+ * URL = <!--#echo var="sqrl_url" -->
+ * Session ID = <!--#echo var="sqrl_id" -->
+ */
+static apr_status_t handle_sqrl_gen(include_ctx_t * ctx, ap_filter_t * f,
+                                    apr_bucket_brigade * bb)
+{
+    request_rec *r = f->r;
+    request_rec *main = r->main;
+    apr_pool_t *p = r->pool;
+    char *tag = NULL, *tag_val = NULL;
+    char *url = NULL, *session_id = NULL;
+    sqrl_rec *sqrl;
+
+    /* Need the main request's pool */
+    while (main) {
+        p = main->pool;
+        main = main->main;
+    }
+
+    /* Loop over directive arguments */
+    while (1) {
+        /* Parse the next name/value pair */
+        sqrl_get_tag_and_value(ctx, &tag, &tag_val, SSI_VALUE_DECODED);
+        if (!tag || !tag_val) {
+            break;
+        }
+
+        /* Check and set the sqrl authentication url */
+        if (!strcmp(tag, "url")) {
+            url = tag_val;
+        }
+        /* Check and set the sqrl session id */
+        else if (!strcmp(tag, "session_id")) {
+            session_id = tag_val;
+        }
+        /* Unknown argument */
+        else {
+            ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, APLOGNO(01366)
+                          "Invalid tag for 'sqrl_gen' directive in %s",
+                          r->filename);
+            SSI_CREATE_ERROR_BUCKET(ctx, f, bb);
+            return APR_SUCCESS;
+        }
+    }
+
+    /* Only generate a sqrl if it's actually going to be used */
+    if (url || session_id) {
+        sqrl = generate_sqrl(r);
+        if (url) {
+            apr_table_set(r->subprocess_env, url, sqrl->url);
+        }
+        if (session_id) {
+            apr_table_set(r->subprocess_env, session_id, sqrl->session_id);
+        }
+    }
+
+    return APR_SUCCESS;
+}
+
+static int sqrl_post_config(apr_pool_t * p, apr_pool_t * plog,
+                            apr_pool_t * ptemp, server_rec * s)
+{
+    /* Retrieve mod_include's optional functions */
+    sqrl_reg_ssi = APR_RETRIEVE_OPTIONAL_FN(ap_register_include_handler);
+    sqrl_get_tag_and_value =
+        APR_RETRIEVE_OPTIONAL_FN(ap_ssi_get_tag_and_value);
+
+    /* If mod_include is loaded, register sqrl directives */
+    if ((sqrl_reg_ssi) && (sqrl_get_tag_and_value)) {
+        sqrl_reg_ssi("sqrl_gen", handle_sqrl_gen);
+    }
+
+    return OK;
+}
+
 
 /*
  * Configuration
@@ -248,7 +364,10 @@ static const command_rec configuration_cmds[] = {
 /* Register mod_sqrl with Apache */
 static void register_hooks(apr_pool_t * pool)
 {
+    static const char *const pre[] = { "mod_include.c", NULL };
     ap_hook_handler(authenticate_sqrl, NULL, NULL, APR_HOOK_MIDDLE);
+    ap_hook_post_config(sqrl_post_config, pre, NULL,
+                        APR_HOOK_MIDDLE);
 }
 
 /* Module Data Structure */

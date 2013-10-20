@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Login</title>
+  <meta charset="UTF-8"/>
+</head>
+
+<body>
+<form action="do_login" method="POST">
+
+  <label for="httpd_username">Username:</label>
+  <input id="httpd_username" name="httpd_username" type="text" value="test"/>
+  <br/>
+
+  <label for="httpd_password">Password:</label>
+  <input id="httpd_password" name="httpd_password" type="password" value="test"/>
+  <br/>
+
+  <input type="hidden" name="httpd_location" value="/login_success.html" />
+
+  <button type="submit">Login</button>
+
+  <!--#sqrl_gen url="sqrl_url" session_id="sqrl_sid" -->
+  <p>URL = <!--#echo var="sqrl_url" --></p>
+  <p>SID = <!--#echo var="sqrl_sid" --></p>
+
+</form>
+</body>
+</html>
+

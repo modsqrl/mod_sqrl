@@ -1,6 +1,8 @@
 
-APXS=/usr/local/bin/apxs22
-APACHECTL=/usr/local/bin/apachectl22
+VER=24
+APXS=/usr/local/bin/apxs$(VER)
+APACHECTL=/usr/local/bin/apachectl$(VER)
+HTDOCS=/usr/local/apache$(VER)/htdocs
 
 .PHONY: format install clean
 
@@ -16,6 +18,7 @@ install: mod_sqrl.la
 reinstall: mod_sqrl.la
 	sudo $(APACHECTL) stop
 	sudo $(APXS) -i mod_sqrl.la
+	sudo cp ../test/login.html $(HTDOCS)
 	sudo $(APACHECTL) start
 
 clean:
