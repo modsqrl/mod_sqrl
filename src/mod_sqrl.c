@@ -20,6 +20,7 @@ limitations under the License.
 #include "http_protocol.h"
 #include "http_log.h"
 #include "ap_config.h"
+#include "apr_base64.h"
 #include "apr_hash.h"
 #include "apr_optional.h"
 #include "apr_strings.h"
@@ -154,13 +155,62 @@ typedef struct
  * SQRL functions
  */
 
-static sqrl_rec *generate_sqrl(request_rec * r)
+#define SESSION_ID_LEN 12
+static sqrl_rec *generate_sqrl(request_rec * r, const char *scheme, const char *domain, const char *additional, const char *path)
 {
     sqrl_rec *sqrl = apr_palloc(r->pool, sizeof(sqrl_rec));
+    unsigned char *session_id_bytes;
+    size_t additional_len;
+    apr_status_t rv;
 
-    /* TODO generate sqrl */
-    sqrl->session_id = "abcdefg";
-    sqrl->url = "sqrl://sample/path?query=string";
+    /* Validate inputs */
+    if(!scheme || *scheme == '\0') {
+        ap_log_rerror(APLOG_MARK, LOG_DEBUG, rv, r, "Setting scheme to 'qrl'");
+        scheme = "qrl";
+    }
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, rv, r, "scheme = %s", scheme);
+    if(!domain || *domain == '\0') {
+        ap_log_rerror(APLOG_MARK, LOG_DEBUG, rv, r, "Setting domain to self's domain");
+        domain = r->server->server_hostname;
+    }
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, rv, r, "domain = %s", domain);
+    if(!path || *path == '\0') {
+        ap_log_rerror(APLOG_MARK, LOG_DEBUG, rv, r, "Setting path to 'sqrl_auth'");
+        path = "sqrl_auth";
+    }
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, rv, r, "path = %s", path);
+
+    /* Generate a session id */
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, rv, r, "Generating session id");
+    session_id_bytes = apr_palloc(r->pool, sizeof(char) * SESSION_ID_LEN);
+    rv = apr_generate_random_bytes(session_id_bytes, SESSION_ID_LEN);
+    if(rv) {
+        ap_log_rerror(APLOG_MARK, LOG_ERR, rv, r,
+                "Error generating random bytes for the session_id");
+        return NULL;
+    }
+
+    /* Convert the session id to base64 */
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, rv, r, "Converting session id to base64");
+    sqrl->session_id = apr_palloc(r->pool, apr_base64_encode_len(SESSION_ID_LEN) + 1);
+    rv = apr_base64_encode_binary((char*)sqrl->session_id, session_id_bytes,
+            SESSION_ID_LEN);
+    ((char*)sqrl->session_id)[rv] = '\0';
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, rv, r, "session_id = %s", sqrl->session_id);
+
+    /* Generate the url */
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, rv, r, "Put it all together to make the URL");
+    sqrl->url = apr_pstrcat(r->pool, scheme, "://", domain, NULL);
+    if(additional && (additional_len = strlen(additional)) > 1) {
+        ap_log_rerror(APLOG_MARK, LOG_DEBUG, rv, r, "additional = %s", additional);
+        sqrl->url = apr_pstrcat(r->pool, sqrl->url, additional, "/", path, "?d=",
+                apr_ltoa(r->pool, additional_len), "&nut=", sqrl->session_id, NULL);
+    } else {
+        ap_log_rerror(APLOG_MARK, LOG_DEBUG, rv, r, "No additional domain");
+        sqrl->url = apr_pstrcat(r->pool, sqrl->url, "/", path, "?nut=",
+                sqrl->session_id, NULL);
+    }
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, rv, r, "url = %s", sqrl->url);
 
     return sqrl;
 }
@@ -320,7 +370,12 @@ static apr_status_t handle_sqrl_gen(include_ctx_t * ctx, ap_filter_t * f,
 
     /* Only generate a sqrl if it's actually going to be used */
     if (url || session_id) {
-        sqrl = generate_sqrl(r);
+        /* TODO Get generate_sqrl parameters from the modules config */
+        sqrl = generate_sqrl(r, NULL, NULL, "/test", NULL);
+        if(!sqrl) {
+            SSI_CREATE_ERROR_BUCKET(ctx, f, bb);
+            return APR_SUCCESS;
+        }
         if (url) {
             apr_table_set(r->subprocess_env, url, sqrl->url);
         }
