@@ -3,11 +3,16 @@ VER=24
 APXS=/usr/local/bin/apxs$(VER)
 APACHECTL=/usr/local/bin/apachectl$(VER)
 HTDOCS=/usr/local/apache$(VER)/htdocs
+NACL=../libsodium/src/libsodium
+NACL_LIB=$(NACL)/libsodium.la
+NACL_INC=$(NACL)/include
+
+CFLAGS=-Wc,"-Wall -g -O0"
 
 .PHONY: format install clean
 
-mod_sqrl.la: mod_sqrl.c
-	$(APXS) -c mod_sqrl.c
+mod_sqrl.la: mod_sqrl.c $(NACL_LIB)
+	$(APXS) -c $(CFLAGS) -I $(NACL_INC) mod_sqrl.c $(NACL_LIB)
 
 format:
 	indent -i4 -npsl -di0 -br -nce -d0 -cli0 -npcs -nfc1 -nut *.c
