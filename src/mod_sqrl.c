@@ -165,23 +165,23 @@ static sqrl_rec *generate_sqrl(request_rec * r, const char *scheme, const char *
 
     /* Validate inputs */
     if(!scheme || *scheme == '\0') {
-        ap_log_rerror(APLOG_MARK, LOG_DEBUG, rv, r, "Setting scheme to 'qrl'");
+        ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "Setting scheme to 'qrl'");
         scheme = "qrl";
     }
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, rv, r, "scheme = %s", scheme);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "scheme = %s", scheme);
     if(!domain || *domain == '\0') {
-        ap_log_rerror(APLOG_MARK, LOG_DEBUG, rv, r, "Setting domain to self's domain");
+        ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "Setting domain to self's domain");
         domain = r->server->server_hostname;
     }
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, rv, r, "domain = %s", domain);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "domain = %s", domain);
     if(!path || *path == '\0') {
-        ap_log_rerror(APLOG_MARK, LOG_DEBUG, rv, r, "Setting path to 'sqrl_auth'");
+        ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "Setting path to 'sqrl_auth'");
         path = "sqrl_auth";
     }
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, rv, r, "path = %s", path);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "path = %s", path);
 
     /* Generate a session id */
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, rv, r, "Generating session id");
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "Generating session id");
     session_id_bytes = apr_palloc(r->pool, sizeof(char) * SESSION_ID_LEN);
     rv = apr_generate_random_bytes(session_id_bytes, SESSION_ID_LEN);
     if(rv) {
@@ -191,26 +191,26 @@ static sqrl_rec *generate_sqrl(request_rec * r, const char *scheme, const char *
     }
 
     /* Convert the session id to base64 */
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, rv, r, "Converting session id to base64");
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "Converting session id to base64");
     sqrl->session_id = apr_palloc(r->pool, apr_base64_encode_len(SESSION_ID_LEN) + 1);
     rv = apr_base64_encode_binary((char*)sqrl->session_id, session_id_bytes,
             SESSION_ID_LEN);
     ((char*)sqrl->session_id)[rv] = '\0';
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, rv, r, "session_id = %s", sqrl->session_id);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "session_id = %s", sqrl->session_id);
 
     /* Generate the url */
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, rv, r, "Put it all together to make the URL");
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "Put it all together to make the URL");
     sqrl->url = apr_pstrcat(r->pool, scheme, "://", domain, NULL);
     if(additional && (additional_len = strlen(additional)) > 1) {
-        ap_log_rerror(APLOG_MARK, LOG_DEBUG, rv, r, "additional = %s", additional);
+        ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "additional = %s", additional);
         sqrl->url = apr_pstrcat(r->pool, sqrl->url, additional, "/", path, "?d=",
                 apr_ltoa(r->pool, additional_len), "&nut=", sqrl->session_id, NULL);
     } else {
-        ap_log_rerror(APLOG_MARK, LOG_DEBUG, rv, r, "No additional domain");
+        ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "No additional domain");
         sqrl->url = apr_pstrcat(r->pool, sqrl->url, "/", path, "?nut=",
                 sqrl->session_id, NULL);
     }
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, rv, r, "url = %s", sqrl->url);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "url = %s", sqrl->url);
 
     return sqrl;
 }
@@ -262,7 +262,7 @@ static int authenticate_sqrl(request_rec * r)
             /* Reject if it's too large */
             if (clen > limit) {
                 ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
-                              "Request is too large (%d/%d)", clen, limit);
+                              "Request is too large (%zu/%zu)", clen, limit);
                 return HTTP_REQUEST_ENTITY_TOO_LARGE;
 
             }
@@ -276,7 +276,7 @@ static int authenticate_sqrl(request_rec * r)
 
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "hostname = %s", hostname);
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "uri = %s", uri);
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "blen = %d", blen);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "blen = %zu", blen);
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "body = %s", body);
 
     ap_set_content_type(r, "text/html;charset=us-ascii");
@@ -330,16 +330,16 @@ static apr_status_t handle_sqrl_gen(include_ctx_t * ctx, ap_filter_t * f,
                                     apr_bucket_brigade * bb)
 {
     request_rec *r = f->r;
-    request_rec *main = r->main;
+    request_rec *mr = r->main;
     apr_pool_t *p = r->pool;
     char *tag = NULL, *tag_val = NULL;
     char *url = NULL, *session_id = NULL;
     sqrl_rec *sqrl;
 
     /* Need the main request's pool */
-    while (main) {
-        p = main->pool;
-        main = main->main;
+    while (mr) {
+        p = mr->pool;
+        mr = mr->main;
     }
 
     /* Loop over directive arguments */
