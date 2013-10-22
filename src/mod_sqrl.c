@@ -155,8 +155,52 @@ typedef struct
  * SQRL functions
  */
 
-#define SESSION_ID_LEN 12
-static sqrl_rec *generate_sqrl(request_rec * r, const char *scheme, const char *domain, const char *additional, const char *path)
+/**
+ * Encode binary data to URL-safe base64.
+ * http://tools.ietf.org/html/rfc4648
+ * @param p Memory pool to allocate the returned encoded string.
+ * @param plain Binary data to encode. '\0' does not terminate the data.
+ * @param plain_len Number of bytes in plain to encode.
+ * @return Base64url encoded string. Terminated by '\0'.
+ */
+char *sqrl_base64url_encode(apr_pool_t * p, const unsigned char *plain,
+                            unsigned int plain_len)
+{
+    char *encoded;
+    char *i;
+    int base64_len;
+
+    /* Use apache to generate the standard base64 string */
+    encoded = apr_palloc(p, apr_base64_encode_len(plain_len) + 1);
+    base64_len = apr_base64_encode_binary(encoded, plain, plain_len);
+    encoded[base64_len] = '\0';
+
+    /* Make the base64 string URL-safe */
+    i = encoded;
+    while (*i != '\0') {
+        switch (*i) {
+        case '+':
+            *i = '-';
+            break;
+        case '/':
+            *i = '_';
+            break;
+        case '=':
+            *i = '\0';
+            goto loop_end;
+            /* default: Valid character */
+        }
+        ++i;
+    }
+  loop_end:
+
+    return encoded;
+}
+
+#define SESSION_ID_LEN 16
+static sqrl_rec *generate_sqrl(request_rec * r, const char *scheme,
+                               const char *domain, const char *additional,
+                               const char *path)
 {
     sqrl_rec *sqrl = apr_palloc(r->pool, sizeof(sqrl_rec));
     unsigned char *session_id_bytes;
@@ -164,18 +208,20 @@ static sqrl_rec *generate_sqrl(request_rec * r, const char *scheme, const char *
     apr_status_t rv;
 
     /* Validate inputs */
-    if(!scheme || *scheme == '\0') {
+    if (!scheme || *scheme == '\0') {
         ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "Setting scheme to 'qrl'");
         scheme = "qrl";
     }
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "scheme = %s", scheme);
-    if(!domain || *domain == '\0') {
-        ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "Setting domain to self's domain");
+    if (!domain || *domain == '\0') {
+        ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
+                      "Setting domain to self's domain");
         domain = r->server->server_hostname;
     }
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "domain = %s", domain);
-    if(!path || *path == '\0') {
-        ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "Setting path to 'sqrl_auth'");
+    if (!path || *path == '\0') {
+        ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
+                      "Setting path to 'sqrl_auth'");
         path = "sqrl_auth";
     }
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "path = %s", path);
@@ -184,31 +230,36 @@ static sqrl_rec *generate_sqrl(request_rec * r, const char *scheme, const char *
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "Generating session id");
     session_id_bytes = apr_palloc(r->pool, sizeof(char) * SESSION_ID_LEN);
     rv = apr_generate_random_bytes(session_id_bytes, SESSION_ID_LEN);
-    if(rv) {
+    if (rv) {
         ap_log_rerror(APLOG_MARK, LOG_ERR, rv, r,
-                "Error generating random bytes for the session_id");
+                      "Error generating random bytes for the session_id");
         return NULL;
     }
 
     /* Convert the session id to base64 */
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "Converting session id to base64");
-    sqrl->session_id = apr_palloc(r->pool, apr_base64_encode_len(SESSION_ID_LEN) + 1);
-    rv = apr_base64_encode_binary((char*)sqrl->session_id, session_id_bytes,
-            SESSION_ID_LEN);
-    ((char*)sqrl->session_id)[rv] = '\0';
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "session_id = %s", sqrl->session_id);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
+                  "Converting session id to base64");
+    sqrl->session_id =
+        sqrl_base64url_encode(r->pool, session_id_bytes, SESSION_ID_LEN);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "session_id = %s",
+                  sqrl->session_id);
 
     /* Generate the url */
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "Put it all together to make the URL");
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
+                  "Put it all together to make the URL");
     sqrl->url = apr_pstrcat(r->pool, scheme, "://", domain, NULL);
-    if(additional && (additional_len = strlen(additional)) > 1) {
-        ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "additional = %s", additional);
-        sqrl->url = apr_pstrcat(r->pool, sqrl->url, additional, "/", path, "?d=",
-                apr_ltoa(r->pool, additional_len), "&nut=", sqrl->session_id, NULL);
-    } else {
+    if (additional && (additional_len = strlen(additional)) > 1) {
+        ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "additional = %s",
+                      additional);
+        sqrl->url =
+            apr_pstrcat(r->pool, sqrl->url, additional, "/", path, "?d=",
+                        apr_ltoa(r->pool, additional_len), "&nut=",
+                        sqrl->session_id, NULL);
+    }
+    else {
         ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "No additional domain");
         sqrl->url = apr_pstrcat(r->pool, sqrl->url, "/", path, "?nut=",
-                sqrl->session_id, NULL);
+                                sqrl->session_id, NULL);
     }
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "url = %s", sqrl->url);
 
@@ -372,7 +423,7 @@ static apr_status_t handle_sqrl_gen(include_ctx_t * ctx, ap_filter_t * f,
     if (url || session_id) {
         /* TODO Get generate_sqrl parameters from the modules config */
         sqrl = generate_sqrl(r, NULL, NULL, "/test", NULL);
-        if(!sqrl) {
+        if (!sqrl) {
             SSI_CREATE_ERROR_BUCKET(ctx, f, bb);
             return APR_SUCCESS;
         }
@@ -421,8 +472,7 @@ static void register_hooks(apr_pool_t * pool)
 {
     static const char *const pre[] = { "mod_include.c", NULL };
     ap_hook_handler(authenticate_sqrl, NULL, NULL, APR_HOOK_MIDDLE);
-    ap_hook_post_config(sqrl_post_config, pre, NULL,
-                        APR_HOOK_MIDDLE);
+    ap_hook_post_config(sqrl_post_config, pre, NULL, APR_HOOK_MIDDLE);
 }
 
 /* Module Data Structure */
