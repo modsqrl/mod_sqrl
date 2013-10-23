@@ -252,8 +252,7 @@ static sqrl_rec *generate_sqrl(request_rec * r, const char *scheme,
         ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "additional = %s",
                       additional);
         sqrl->url =
-            apr_pstrcat(r->pool, sqrl->url, additional, "/", path, "?d=",
-                        apr_ltoa(r->pool, additional_len), "&nut=",
+            apr_pstrcat(r->pool, sqrl->url, additional, "|", path, "?nut=",
                         sqrl->session_id, NULL);
     }
     else {
