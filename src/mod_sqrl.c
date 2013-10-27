@@ -25,6 +25,7 @@ limitations under the License.
 #include "apr_optional.h"
 #include "apr_strings.h"
 #include "mod_include.h"
+#include "sodium/core.h"
 
 static APR_OPTIONAL_FN_TYPE(ap_register_include_handler) * sqrl_reg_ssi;
      static APR_OPTIONAL_FN_TYPE(ap_ssi_get_tag_and_value) *
@@ -440,6 +441,8 @@ static apr_status_t handle_sqrl_gen(include_ctx_t * ctx, ap_filter_t * f,
 static int sqrl_post_config(apr_pool_t * p, apr_pool_t * plog,
                             apr_pool_t * ptemp, server_rec * s)
 {
+    int rv;
+
     /* Retrieve mod_include's optional functions */
     sqrl_reg_ssi = APR_RETRIEVE_OPTIONAL_FN(ap_register_include_handler);
     sqrl_get_tag_and_value =
@@ -448,6 +451,14 @@ static int sqrl_post_config(apr_pool_t * p, apr_pool_t * plog,
     /* If mod_include is loaded, register sqrl directives */
     if ((sqrl_reg_ssi) && (sqrl_get_tag_and_value)) {
         sqrl_reg_ssi("sqrl_gen", handle_sqrl_gen);
+    }
+
+    /* Initialize the libsodium library. Makes it go faster. :-) */
+    rv = sodium_init();
+    if (rv) {
+        ap_log_error(APLOG_MARK, APLOG_ERR, rv, s,
+                     "Error initializing the libsodium library");
+        return rv;
     }
 
     return OK;
