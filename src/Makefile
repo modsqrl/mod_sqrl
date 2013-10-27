@@ -1,31 +1,44 @@
 
-VER=24
-APXS=/usr/local/bin/apxs$(VER)
-APACHECTL=/usr/local/bin/apachectl$(VER)
-HTDOCS=/usr/local/apache$(VER)/htdocs
-NACL=../libsodium/src/libsodium
-NACL_LIB=$(NACL)/libsodium.la
-NACL_INC=$(NACL)/include
+builddir=.
+top_srcdir=/usr/local/apache24
+top_builddir=$(top_srcdir)
+include $(top_builddir)/build/special.mk
 
-CFLAGS=-Wc,"-Wall -g -O0"
+#   the used tools
+APXS=$(top_srcdir)/bin/apxs
+APACHECTL=$(top_srcdir)/bin/apachectl
 
-.PHONY: format install clean
+#   additional defines, includes and libraries
+MOD_CFLAGS=-Wall -g -O0
+MOD_LDFLAGS=-lsodium
 
-mod_sqrl.la: mod_sqrl.c $(NACL_LIB)
-	$(APXS) -c $(CFLAGS) -I $(NACL_INC) mod_sqrl.c $(NACL_LIB)
+#   the default target
+all: local-shared-build
 
+#   install the shared object file into Apache 
+install: install-modules-yes
+
+#   format the code according to apache's style guide
 format:
 	indent -i4 -npsl -di0 -br -nce -d0 -cli0 -npcs -nfc1 -nut *.c
 
-install: mod_sqrl.la
-	sudo $(APXS) -i mod_sqrl.la
-
-reinstall: mod_sqrl.la
-	sudo $(APACHECTL) stop
-	sudo $(APXS) -i mod_sqrl.la
-	sudo cp ../test/login.html $(HTDOCS)
-	sudo $(APACHECTL) start
-
+#   cleanup
 clean:
-	rm -f *.la *.lo *.o *.slo
+	-rm -f mod_sqrl.o mod_sqrl.lo mod_sqrl.slo mod_sqrl.la 
+
+#   simple test
+test: reload
+	curl http://localhost/sqrl
+
+#   install and activate shared object by reloading Apache to
+#   force a reload of the shared object file
+reload: install restart
+
+#   the general Apache start/restart/stop procedures
+start:
+	$(APACHECTL) start
+restart:
+	$(APACHECTL) restart
+stop:
+	$(APACHECTL) stop
 
