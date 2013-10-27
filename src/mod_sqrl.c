@@ -26,6 +26,7 @@ limitations under the License.
 #include "apr_strings.h"
 #include "mod_include.h"
 #include "sodium/core.h"
+#include "sodium/randombytes.h"
 
 static APR_OPTIONAL_FN_TYPE(ap_register_include_handler) * sqrl_reg_ssi;
      static APR_OPTIONAL_FN_TYPE(ap_ssi_get_tag_and_value) *
@@ -206,7 +207,6 @@ static sqrl_rec *generate_sqrl(request_rec * r, const char *scheme,
     sqrl_rec *sqrl = apr_palloc(r->pool, sizeof(sqrl_rec));
     unsigned char *session_id_bytes;
     size_t additional_len;
-    apr_status_t rv;
 
     /* Validate inputs */
     if (!scheme || *scheme == '\0') {
@@ -230,12 +230,8 @@ static sqrl_rec *generate_sqrl(request_rec * r, const char *scheme,
     /* Generate a session id */
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "Generating session id");
     session_id_bytes = apr_palloc(r->pool, sizeof(char) * SESSION_ID_LEN);
-    rv = apr_generate_random_bytes(session_id_bytes, SESSION_ID_LEN);
-    if (rv) {
-        ap_log_rerror(APLOG_MARK, LOG_ERR, rv, r,
-                      "Error generating random bytes for the session_id");
-        return NULL;
-    }
+    /* libsodium PRNG */
+    randombytes(session_id_bytes, SESSION_ID_LEN);
 
     /* Convert the session id to base64 */
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
