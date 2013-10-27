@@ -283,14 +283,13 @@ static sqrl_rec *generate_sqrl(request_rec * r, const char *scheme,
     crypto_hash(ip_hash, ip_buff, (12 + ip_len));       /* int returned? */
 
     /* Build the authentication URL's nut */
-    memcpy(nut_buff, session_id_bytes, SESSION_ID_LEN);
-    memcpy((nut_buff + 16), ip_buff, 12);
-    nut_buff[28] = ip_hash[0];
-    nut_buff[29] = ip_hash[1];
-    nut_buff[30] = ip_hash[2];
-    nut_buff[31] = ip_hash[3];
+    memcpy(nut_buff, ip_buff, 12);
+    nut_buff[12] = ip_hash[0];
+    nut_buff[13] = ip_hash[1];
+    nut_buff[14] = ip_hash[2];
+    nut_buff[15] = ip_hash[3];
     /* TODO encrypt nut_buff before base64 encoding */
-    nut = sqrl_base64url_encode(r->pool, nut_buff, 32);
+    nut = sqrl_base64url_encode(r->pool, nut_buff, 16);
 
     /* Generate the url */
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
@@ -300,13 +299,13 @@ static sqrl_rec *generate_sqrl(request_rec * r, const char *scheme,
                       additional);
         sqrl->url =
             apr_pstrcat(r->pool, scheme, "://", domain, additional, "|", path,
-                        "?nut=", nut, NULL);
+                        "?nut=", nut, "&sid=", sqrl->session_id, NULL);
     }
     else {
         ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "No additional domain");
         sqrl->url =
             apr_pstrcat(r->pool, scheme, "://", domain, "/", path, "?nut=",
-                        nut, NULL);
+                        nut, "&sid=", sqrl->session_id, NULL);
     }
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "url = %s", sqrl->url);
 
