@@ -24,9 +24,12 @@ limitations under the License.
 #include "apr_hash.h"
 #include "apr_optional.h"
 #include "apr_strings.h"
+#include "apr_time.h"
 #include "mod_include.h"
 #include "sodium/core.h"
+#include "sodium/crypto_hash.h"
 #include "sodium/randombytes.h"
+#include "sodium/version.h"
 
 static APR_OPTIONAL_FN_TYPE(ap_register_include_handler) * sqrl_reg_ssi;
      static APR_OPTIONAL_FN_TYPE(ap_ssi_get_tag_and_value) *
@@ -150,7 +153,14 @@ typedef struct
 
 typedef struct
 {
-} sqrl_config_rec;
+    apr_int32_t counter;
+} sqrl_svr_cfg;
+
+typedef struct
+{
+} sqrl_dir_cfg;
+
+module AP_MODULE_DECLARE_DATA sqrl_module;
 
 
 /*
@@ -205,8 +215,16 @@ static sqrl_rec *generate_sqrl(request_rec * r, const char *scheme,
                                const char *path)
 {
     sqrl_rec *sqrl = apr_palloc(r->pool, sizeof(sqrl_rec));
+    apr_time_t time_now = apr_time_sec(apr_time_now());
+    unsigned char *nonce = apr_palloc(r->pool, 4);
+    apr_size_t ip_len = strlen(r->useragent_ip);
+    unsigned char *ip_buff = apr_palloc(r->pool, 12 + ip_len);
+    unsigned char *ip_hash = apr_palloc(r->pool, crypto_hash_BYTES);
+    unsigned char *nut_buff = apr_palloc(r->pool, 32);
+    char *nut;
     unsigned char *session_id_bytes;
     size_t additional_len;
+    sqrl_svr_cfg *conf;
 
     /* Validate inputs */
     if (!scheme || *scheme == '\0') {
@@ -229,9 +247,8 @@ static sqrl_rec *generate_sqrl(request_rec * r, const char *scheme,
 
     /* Generate a session id */
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "Generating session id");
-    session_id_bytes = apr_palloc(r->pool, sizeof(char) * SESSION_ID_LEN);
-    /* libsodium PRNG */
-    randombytes(session_id_bytes, SESSION_ID_LEN);
+    session_id_bytes = apr_palloc(r->pool, SESSION_ID_LEN);
+    randombytes(session_id_bytes, SESSION_ID_LEN);      /* libsodium PRNG */
 
     /* Convert the session id to base64 */
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
@@ -241,21 +258,55 @@ static sqrl_rec *generate_sqrl(request_rec * r, const char *scheme,
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "session_id = %s",
                   sqrl->session_id);
 
+    /* Generate a nonce */
+    randombytes(nonce, 4);
+
+    /* Load the config to get the counter */
+    conf = ap_get_module_config(r->server->module_config, &sqrl_module);
+
+    /* Build a salted IP */
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "Clients IP = %s",
+                  r->useragent_ip);
+    ++conf->counter;            /* TODO increment_and_get() */
+    ip_buff[0] = time_now >> 24 & 0xff;
+    ip_buff[1] = time_now >> 16 & 0xff;
+    ip_buff[2] = time_now >> 8 & 0xff;
+    ip_buff[3] = time_now & 0xff;
+    ip_buff[4] = conf->counter >> 24 & 0xff;
+    ip_buff[5] = conf->counter >> 16 & 0xff;
+    ip_buff[6] = conf->counter >> 8 & 0xff;
+    ip_buff[7] = conf->counter & 0xff;
+    memcpy((ip_buff + 8), nonce, 4);
+    memcpy((ip_buff + 12), r->useragent_ip, ip_len);
+
+    /* Hash the salted IP */
+    crypto_hash(ip_hash, ip_buff, (12 + ip_len));       /* int returned? */
+
+    /* Build the authentication URL's nut */
+    memcpy(nut_buff, session_id_bytes, SESSION_ID_LEN);
+    memcpy((nut_buff + 16), ip_buff, 12);
+    nut_buff[28] = ip_hash[0];
+    nut_buff[29] = ip_hash[1];
+    nut_buff[30] = ip_hash[2];
+    nut_buff[31] = ip_hash[3];
+    /* TODO encrypt nut_buff before base64 encoding */
+    nut = sqrl_base64url_encode(r->pool, nut_buff, 32);
+
     /* Generate the url */
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
                   "Put it all together to make the URL");
-    sqrl->url = apr_pstrcat(r->pool, scheme, "://", domain, NULL);
     if (additional && (additional_len = strlen(additional)) > 1) {
         ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "additional = %s",
                       additional);
         sqrl->url =
-            apr_pstrcat(r->pool, sqrl->url, additional, "|", path, "?nut=",
-                        sqrl->session_id, NULL);
+            apr_pstrcat(r->pool, scheme, "://", domain, additional, "|", path,
+                        "?nut=", nut, NULL);
     }
     else {
         ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "No additional domain");
-        sqrl->url = apr_pstrcat(r->pool, sqrl->url, "/", path, "?nut=",
-                                sqrl->session_id, NULL);
+        sqrl->url =
+            apr_pstrcat(r->pool, scheme, "://", domain, "/", path, "?nut=",
+                        nut, NULL);
     }
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "url = %s", sqrl->url);
 
@@ -267,11 +318,9 @@ static sqrl_rec *generate_sqrl(request_rec * r, const char *scheme,
  * SQRL Authentication handler
  */
 
-module AP_MODULE_DECLARE_DATA sqrl_module;
-
 static int authenticate_sqrl(request_rec * r)
 {
-    sqrl_config_rec *conf;
+    sqrl_dir_cfg *conf;
     const char *hostname;
     char *uri;
     char *body;
@@ -456,6 +505,8 @@ static int sqrl_post_config(apr_pool_t * p, apr_pool_t * plog,
                      "Error initializing the libsodium library");
         return rv;
     }
+    ap_log_error(APLOG_MARK, APLOG_INFO, 0, s,
+                 "libsodium initialized: %s", sodium_version_string());
 
     return OK;
 }
@@ -464,6 +515,17 @@ static int sqrl_post_config(apr_pool_t * p, apr_pool_t * plog,
 /*
  * Configuration
  */
+
+static void *create_server_config(apr_pool_t * pool, server_rec * s)
+{
+    sqrl_svr_cfg *conf = apr_palloc(pool, sizeof(sqrl_svr_cfg));
+    unsigned char *counter_bytes = apr_palloc(pool, 4);
+    randombytes(counter_bytes, 4);
+    conf->counter = ((counter_bytes[0] << 24) |
+                     (counter_bytes[1] << 16) |
+                     (counter_bytes[2] << 8) | (counter_bytes[3]));
+    return conf;
+}
 
 static const command_rec configuration_cmds[] = {
     {NULL}
@@ -486,7 +548,7 @@ module AP_MODULE_DECLARE_DATA sqrl_module = {
     STANDARD20_MODULE_STUFF,
     NULL,                       /* create per-directory configuration record */
     NULL,                       /* merge per-directory configuration records */
-    NULL,                       /* create per-server configuration record */
+    create_server_config,       /* create per-server configuration record */
     NULL,                       /* merge per-server configuration records */
     configuration_cmds,         /* configuration directives */
     register_hooks              /* register modules functions with the core */
