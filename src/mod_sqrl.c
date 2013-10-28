@@ -414,13 +414,10 @@ static int authenticate_sqrl(request_rec * r)
 
 static int sign_sqrl(request_rec * r)
 {
-    unsigned char *master, *private, *public, *signature, i;
+    unsigned char *private, *public, *signature;
     char *public64, *signature64;
-    char *url;
-    char *domain;
-    char *path;
-    char *end;
-    apr_size_t domain_len, url_len;
+    char *url, *end, *pipe;
+    apr_size_t url_len;
     unsigned long long signature_len;
     apr_bucket_brigade *bb;
     apr_bucket *b;
@@ -435,12 +432,6 @@ static int sign_sqrl(request_rec * r)
         return HTTP_METHOD_NOT_ALLOWED;
     }
 
-    /* Bad Master key */
-    master = apr_palloc(r->pool, 32);
-    for(i = 0 ; i < 32 ; ++i) {
-        *(master + i) = i;
-    }
-
     /* Get URL to sign */
     url = strstr(r->parsed_uri.query, "url=") + 4;
     for(end = url ; *end != '&' && *end != '\0' ; ++end) {
@@ -452,23 +443,11 @@ static int sign_sqrl(request_rec * r)
         ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r, "Error interpreting the given url: %s", url);
         return HTTP_INTERNAL_SERVER_ERROR;
     }
-    domain = strstr(url, "://") + 3;
-    path = strchr(domain, '|');
-    if(path) {
-        *path = '/';
-    }
-    else {
-        path = strchr(domain, '/');
-    }
-    domain_len = path - domain;
-    domain = apr_pstrndup(r->pool, domain, domain_len);
 
-    /* Generate private key */
-    private = apr_palloc(r->pool, crypto_auth_keybytes());
-    rv = crypto_auth(private, (unsigned char*)domain, domain_len, master);
-    if(rv) {
-        ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r, "Error generating the private key");
-        return HTTP_INTERNAL_SERVER_ERROR;
+    /* Replace the pipe */
+    pipe = strchr(url, '|');
+    if(pipe) {
+        *pipe = '/';
     }
 
     /* Generate the public key */
