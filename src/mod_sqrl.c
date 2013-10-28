@@ -27,7 +27,9 @@ limitations under the License.
 #include "apr_time.h"
 #include "mod_include.h"
 #include "sodium/core.h"
+#include "sodium/crypto_auth.h"
 #include "sodium/crypto_hash.h"
+#include "sodium/crypto_sign.h"
 #include "sodium/randombytes.h"
 #include "sodium/version.h"
 
@@ -410,6 +412,110 @@ static int authenticate_sqrl(request_rec * r)
     return OK;
 }
 
+static int sign_sqrl(request_rec * r)
+{
+    unsigned char *master, *private, *public, *signature, i;
+    char *public64, *signature64;
+    char *url;
+    char *domain;
+    char *path;
+    char *end;
+    apr_size_t domain_len, url_len;
+    unsigned long long signature_len;
+    apr_bucket_brigade *bb;
+    apr_bucket *b;
+    apr_status_t rv;
+    char *response;
+
+    if (!r->handler || (strcmp(r->handler, "sign_sqrl") != 0)) {
+        return DECLINED;
+    }
+
+    if (r->method_number != M_GET) {
+        return HTTP_METHOD_NOT_ALLOWED;
+    }
+
+    /* Bad Master key */
+    master = apr_palloc(r->pool, 32);
+    for(i = 0 ; i < 32 ; ++i) {
+        *(master + i) = i;
+    }
+
+    /* Get URL to sign */
+    url = strstr(r->parsed_uri.query, "url=") + 4;
+    for(end = url ; *end != '&' && *end != '\0' ; ++end) {
+    }
+    url_len = end - url;
+    url = apr_pstrndup(r->pool, url, url_len);
+    rv = ap_unescape_urlencoded(url);
+    if(rv) {
+        ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r, "Error interpreting the given url: %s", url);
+        return HTTP_INTERNAL_SERVER_ERROR;
+    }
+    domain = strstr(url, "://") + 3;
+    path = strchr(domain, '|');
+    if(path) {
+        *path = '/';
+    }
+    else {
+        path = strchr(domain, '/');
+    }
+    domain_len = path - domain;
+    domain = apr_pstrndup(r->pool, domain, domain_len);
+
+    /* Generate private key */
+    private = apr_palloc(r->pool, crypto_auth_keybytes());
+    rv = crypto_auth(private, (unsigned char*)domain, domain_len, master);
+    if(rv) {
+        ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r, "Error generating the private key");
+        return HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    /* Generate the public key */
+    public = apr_palloc(r->pool, crypto_sign_publickeybytes());
+    private = apr_palloc(r->pool, crypto_sign_secretkeybytes()); /* TODO */
+    rv = crypto_sign_keypair(public, private);
+    if(rv) {
+        ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r, "Error generating the public key");
+        return HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    /* Encode the public key in base64 */
+    public64 = sqrl_base64url_encode(r->pool, public, crypto_sign_publickeybytes());
+
+    /* Complete the URL */
+    url = apr_pstrcat(r->pool, url, "&sqrlver=1&sqrlopt=enforce&sqrlkey=", public64, NULL);
+
+    /* Sign the URL */
+    signature = apr_palloc(r->pool, crypto_sign_bytes());
+    rv = crypto_sign(signature, &signature_len, (unsigned char*)url, strlen(url), private);
+    if(rv) {
+        ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r, "Error signing the URL");
+        return HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    /* Encode the signature in base64 */
+    signature64 = sqrl_base64url_encode(r->pool, signature, crypto_sign_bytes());
+
+    /* Build the reponse */
+    response = apr_pstrcat(r->pool, "sqrlurl=", url, "&sqrlsig=", signature64, NULL);
+
+    /* Write output */
+    ap_set_content_type(r, "text/plain");
+    bb = apr_brigade_create(r->pool, r->connection->bucket_alloc);
+    b = apr_bucket_immortal_create(response, strlen(response), bb->bucket_alloc);
+    APR_BRIGADE_INSERT_TAIL(bb, b);
+    APR_BRIGADE_INSERT_TAIL(bb, apr_bucket_eos_create(bb->bucket_alloc));
+    rv = ap_pass_brigade(r->output_filters, bb);
+    if(rv != APR_SUCCESS) {
+        ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r, "Error writing the response");
+        return HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    return OK;
+}
+
+
 /*
  * mod_include extention.
  */
@@ -539,6 +645,7 @@ static void register_hooks(apr_pool_t * pool)
 {
     static const char *const pre[] = { "mod_include.c", NULL };
     ap_hook_handler(authenticate_sqrl, NULL, NULL, APR_HOOK_MIDDLE);
+    ap_hook_handler(sign_sqrl, NULL, NULL, APR_HOOK_MIDDLE);
     ap_hook_post_config(sqrl_post_config, pre, NULL, APR_HOOK_MIDDLE);
 }
 
