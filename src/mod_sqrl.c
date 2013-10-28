@@ -79,12 +79,12 @@ static APR_OPTIONAL_FN_TYPE(ap_register_include_handler) * sqrl_reg_ssi;
         /* Unescape */
         if (value) {
             *value++ = '\0';
-            ap_unescape_url(key);
-            ap_unescape_url(value);
+            ap_unescape_urlencoded(key);
+            ap_unescape_urlencoded(value);
         }
         else {
             value = "";
-            ap_unescape_url(key);
+            ap_unescape_urlencoded(key);
         }
 
         /* Store in the hash */

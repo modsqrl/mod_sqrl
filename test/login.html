@@ -57,7 +57,7 @@
 				}
 			};
 			xhr.open("POST", url, true);
-			xhr.send(sqrlsig);
+			xhr.send("sqrlsig=" + sqrlsig);
 		}
 
 		function signUrl(url) {
@@ -71,13 +71,11 @@
 						return;
 					}
 					// Parse the returned data
-					var params = {sqrlurl: "", sqrlsig: ""};
-					var array = xhr.responseText.split("&");
-					for(var i = 0 ; i < array.length ; ++i) {
-						var pair = array[i].split("=");
-						params[pair[0]] = pair[1];
-					}
-					authenticate(params.sqrlurl, params.sqrlsig);
+					var i = xhr.responseText.indexOf("sqrlurl=") + 8;
+					var j = xhr.responseText.indexOf("&sqrlsig=");
+					var sqrlurl = xhr.responseText.substring(i, j);
+					var sqrlsig = xhr.responseText.substring(j + 9);
+					authenticate(sqrlurl, sqrlsig);
 				}
 			};
 			xhr.open("GET", "sign_sqrl?url=" + encodeURIComponent(url), true);
