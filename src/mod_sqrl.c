@@ -434,60 +434,70 @@ static int sign_sqrl(request_rec * r)
 
     /* Get URL to sign */
     url = strstr(r->parsed_uri.query, "url=") + 4;
-    for(end = url ; *end != '&' && *end != '\0' ; ++end) {
+    for (end = url; *end != '&' && *end != '\0'; ++end) {
     }
     url_len = end - url;
     url = apr_pstrndup(r->pool, url, url_len);
     rv = ap_unescape_urlencoded(url);
-    if(rv) {
-        ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r, "Error interpreting the given url: %s", url);
+    if (rv) {
+        ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r,
+                      "Error interpreting the given url: %s", url);
         return HTTP_INTERNAL_SERVER_ERROR;
     }
 
     /* Replace the pipe */
     pipe = strchr(url, '|');
-    if(pipe) {
+    if (pipe) {
         *pipe = '/';
     }
 
     /* Generate the public key */
     public = apr_palloc(r->pool, crypto_sign_publickeybytes());
-    private = apr_palloc(r->pool, crypto_sign_secretkeybytes()); /* TODO */
+    private = apr_palloc(r->pool, crypto_sign_secretkeybytes());        /* TODO */
     rv = crypto_sign_keypair(public, private);
-    if(rv) {
-        ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r, "Error generating the public key");
+    if (rv) {
+        ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r,
+                      "Error generating the public key");
         return HTTP_INTERNAL_SERVER_ERROR;
     }
 
     /* Encode the public key in base64 */
-    public64 = sqrl_base64url_encode(r->pool, public, crypto_sign_publickeybytes());
+    public64 =
+        sqrl_base64url_encode(r->pool, public, crypto_sign_publickeybytes());
 
     /* Complete the URL */
-    url = apr_pstrcat(r->pool, url, "&sqrlver=1&sqrlopt=enforce&sqrlkey=", public64, NULL);
+    url =
+        apr_pstrcat(r->pool, url, "&sqrlver=1&sqrlopt=enforce&sqrlkey=",
+                    public64, NULL);
 
     /* Sign the URL */
     signature = apr_palloc(r->pool, crypto_sign_bytes());
-    rv = crypto_sign(signature, &signature_len, (unsigned char*)url, strlen(url), private);
-    if(rv) {
+    rv = crypto_sign(signature, &signature_len, (unsigned char *) url,
+                     strlen(url), private);
+    if (rv) {
         ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r, "Error signing the URL");
         return HTTP_INTERNAL_SERVER_ERROR;
     }
 
     /* Encode the signature in base64 */
-    signature64 = sqrl_base64url_encode(r->pool, signature, crypto_sign_bytes());
+    signature64 =
+        sqrl_base64url_encode(r->pool, signature, crypto_sign_bytes());
 
     /* Build the reponse */
-    response = apr_pstrcat(r->pool, "sqrlurl=", url, "&sqrlsig=", signature64, NULL);
+    response =
+        apr_pstrcat(r->pool, "sqrlurl=", url, "&sqrlsig=", signature64, NULL);
 
     /* Write output */
     ap_set_content_type(r, "text/plain");
     bb = apr_brigade_create(r->pool, r->connection->bucket_alloc);
-    b = apr_bucket_immortal_create(response, strlen(response), bb->bucket_alloc);
+    b = apr_bucket_immortal_create(response, strlen(response),
+                                   bb->bucket_alloc);
     APR_BRIGADE_INSERT_TAIL(bb, b);
     APR_BRIGADE_INSERT_TAIL(bb, apr_bucket_eos_create(bb->bucket_alloc));
     rv = ap_pass_brigade(r->output_filters, bb);
-    if(rv != APR_SUCCESS) {
-        ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r, "Error writing the response");
+    if (rv != APR_SUCCESS) {
+        ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r,
+                      "Error writing the response");
         return HTTP_INTERNAL_SERVER_ERROR;
     }
 
