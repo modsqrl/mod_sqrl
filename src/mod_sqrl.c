@@ -78,7 +78,8 @@ static APR_OPTIONAL_FN_TYPE(ap_register_include_handler) * sqrl_reg_ssi;
 
         /* Unescape */
         if (value) {
-            *value++ = '\0';
+            *value = '\0';
+            ++value;
             ap_unescape_urlencoded(key);
             ap_unescape_urlencoded(value);
         }
@@ -90,11 +91,12 @@ static APR_OPTIONAL_FN_TYPE(ap_register_include_handler) * sqrl_reg_ssi;
         /* Store in the hash */
         values = apr_hash_get(form, key, APR_HASH_KEY_STRING);
         if (values == NULL) {
-            values = apr_array_make(pool, 1, sizeof(const char *));
+            values = apr_array_make(pool, 1, sizeof(char *));
             apr_hash_set(form, key, APR_HASH_KEY_STRING, values);
         }
-        element = apr_array_push(values);
-        *element = apr_pstrdup(pool, value);
+        APR_ARRAY_PUSH(values, char *) = value;
+        /*element = apr_array_push(values);
+         *element = apr_pstrdup(pool, value);*/
     }
 
     return form;
@@ -147,10 +149,29 @@ static apr_size_t read_body(request_rec * r, char **body, apr_size_t limit)
     return count;
 }
 
+static apr_int32_t bytes_to_int32(unsigned char bytes[4])
+{
+    return ((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | (bytes[3])
+        );
+}
+
 typedef struct
 {
-    const char *session_id;
-    const char *url;
+    apr_time_t timestamp;
+    apr_int32_t counter;
+    unsigned char *nonce;
+    unsigned char *ip_hash;
+} sqrl_nut_rec;
+
+typedef struct
+{
+    char *url;
+    sqrl_nut_rec *nut;
+    char *session_id;
+    float version;
+    apr_array_header_t *options;
+    unsigned char *key;
+    apr_size_t key_len;
 } sqrl_rec;
 
 typedef struct
@@ -168,6 +189,146 @@ module AP_MODULE_DECLARE_DATA sqrl_module;
 /*
  * SQRL functions
  */
+
+static sqrl_nut_rec *parse_sqrl_nut(apr_pool_t * p, const char *nut)
+{
+    sqrl_nut_rec *sqrl_nut = apr_palloc(p, sizeof(sqrl_nut_rec));
+    unsigned char *nut_bytes = apr_palloc(p, strlen(nut));
+
+    apr_base64_decode_binary(nut_bytes, nut);
+    sqrl_nut->timestamp = apr_time_from_sec(bytes_to_int32(nut_bytes));
+    sqrl_nut->counter = bytes_to_int32(nut_bytes + 4);
+    sqrl_nut->nonce = apr_palloc(p, 4);
+    memcpy(sqrl_nut->nonce, (nut_bytes + 8), 4);
+    sqrl_nut->ip_hash = apr_palloc(p, 4);
+    memcpy(sqrl_nut->ip_hash, (nut_bytes + 12), 4);
+
+    return sqrl_nut;
+}
+
+static int check_ip_hash(apr_pool_t * p, sqrl_nut_rec * nut)
+{
+    return 0;
+}
+
+static void escape_hex(char *dest, const unsigned char *src,
+                       apr_size_t srclen)
+{
+    static char hex[16] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+        'a', 'b', 'c', 'd', 'e', 'f'
+    };
+    apr_size_t i, j;
+    for (i = 0, j = 0; i < srclen; ++i) {
+        dest[j++] = hex[src[i] >> 4];
+        dest[j++] = hex[src[i] & 0x0f];
+    }
+}
+
+sqrl_rec *parse_sqrl(request_rec * r, const char *url)
+{
+    apr_pool_t *p = r->pool;
+    sqrl_rec *sqrl = apr_palloc(p, sizeof(sqrl_rec));
+    apr_hash_t *form_data;
+    apr_array_header_t *values;
+    char *value, **val;
+    char *i, **opt;
+    char *nonce_hex, *ip_hash_hex, *sqrlkey_hex;
+
+    sqrl->url = apr_pstrdup(p, url);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "url = %s", sqrl->url);
+
+    /* Find the query string */
+    i = strchr(sqrl->url, '?');
+    if (i == NULL) {
+        return NULL;
+    }
+    ++i;
+
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "query = %s", i);
+
+    /* Parse the query string */
+    form_data = parse_form_data(p, i, 50);
+    /* The form processing modifies the url so it needs to be re-copied */
+    sqrl->url = apr_pstrdup(p, url);
+
+    values = apr_hash_get(form_data, "nut", APR_HASH_KEY_STRING);
+    value = APR_ARRAY_IDX(values, 0, char *);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "nut = %s", value);
+    if (!value) {
+        return NULL;
+    }
+    sqrl->nut = parse_sqrl_nut(p, value);
+
+    values = apr_hash_get(form_data, "sid", APR_HASH_KEY_STRING);
+    value = APR_ARRAY_IDX(values, 0, char *);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "session_id = %s", value);
+    if (!value) {
+        return NULL;
+    }
+    sqrl->session_id = apr_pstrdup(p, value);
+
+    values = apr_hash_get(form_data, "sqrlkey", APR_HASH_KEY_STRING);
+    value = APR_ARRAY_IDX(values, 0, char *);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "sqrlkey = %s", value);
+    if (!value) {
+        return NULL;
+    }
+    sqrl->key_len = apr_base64_decode_len(value);
+    sqrl->key = apr_palloc(p, sqrl->key_len);
+    apr_base64_decode_binary(sqrl->key, value);
+
+    values = apr_hash_get(form_data, "sqrlver", APR_HASH_KEY_STRING);
+    value = APR_ARRAY_IDX(values, 0, char *);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "sqrlver = %s", value);
+    if (!value) {
+        sqrl->version = 1;
+    }
+    else {
+        sqrl->version = strtod(value, &i);
+        if (*i != '\0') {
+            sqrl->version = 1;
+        }
+    }
+
+    values = apr_hash_get(form_data, "sqrlopt", APR_HASH_KEY_STRING);
+    value = APR_ARRAY_IDX(values, 0, char *);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "sqrlopt = %s", value);
+    if (value) {
+        sqrl->options = apr_array_make(p, 1, sizeof(char *));
+        i = NULL;
+        for (opt = (char **) apr_strtok(value, ",", &i);
+             (opt); opt = (char **) apr_strtok(NULL, ",", &i)) {
+            val = apr_array_push(sqrl->options);
+            val = opt;
+        }
+    }
+
+    /* Stringify date */
+    i = apr_palloc(r->pool, APR_RFC822_DATE_LEN);
+    apr_rfc822_date(i, sqrl->nut->timestamp);
+    /* Stringify nonce */
+    nonce_hex = apr_palloc(r->pool, 9);
+    escape_hex(nonce_hex, sqrl->nut->nonce, 4);
+    *(nonce_hex + 8) = '\0';
+    /* Stringify ip_hash */
+    ip_hash_hex = apr_palloc(r->pool, 9);
+    escape_hex(ip_hash_hex, sqrl->nut->ip_hash, 4);
+    *(ip_hash_hex + 8) = '\0';
+    /* Stringify sqrlkey */
+    sqrlkey_hex = apr_palloc(r->pool, 65);
+    escape_hex(sqrlkey_hex, sqrl->key, 32);
+    *(sqrlkey_hex + 64) = '\0';
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "url = %s", sqrl->url);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
+                  "nut->timestamp = %s ; nut->counter = %d ; nut->nonce = %s ; "
+                  "nut->ip_hash = %s", i, sqrl->nut->counter, nonce_hex,
+                  ip_hash_hex);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
+                  "sid = %s ; sqrlkey = %s ; sqrlver = %f", sqrl->session_id,
+                  sqrlkey_hex, sqrl->version);
+
+    return sqrl;
+}
 
 /**
  * Encode binary data to URL-safe base64.
@@ -332,6 +493,7 @@ static int authenticate_sqrl(request_rec * r)
     apr_hash_index_t *param;    /* Current parameter */
     const char *key;            /* Parameter key */
     apr_array_header_t *values; /* Parameter value */
+    sqrl_rec *sqrl;
 
     conf = ap_get_module_config(r->per_dir_config, &sqrl_module);
 
@@ -370,6 +532,10 @@ static int authenticate_sqrl(request_rec * r)
         }
     }
     blen = read_body(r, &body, clen);
+
+    sqrl = parse_sqrl(r, uri);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "session_id = %s",
+                  sqrl->session_id);
 
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "hostname = %s", hostname);
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "uri = %s", uri);
