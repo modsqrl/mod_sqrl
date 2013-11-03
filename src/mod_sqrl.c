@@ -45,8 +45,7 @@ static APR_OPTIONAL_FN_TYPE(ap_register_include_handler) * sqrl_reg_ssi;
  * @return Hashtable of parsed parameters. Because a key can have multiple
  *         values, the hashtable value is an array of parameter values.
  */
-     static apr_hash_t *parse_form_data(apr_pool_t * pool, char *str,
-                                        int limit)
+ static apr_hash_t *parse_form_data(apr_pool_t * pool, char *str, int limit)
 {
     apr_hash_t *form;
     apr_array_header_t *values;
@@ -55,7 +54,6 @@ static APR_OPTIONAL_FN_TYPE(ap_register_include_handler) * sqrl_reg_ssi;
     char *last;
     char *key;
     char *value;
-    char **element;
 
     if (str == NULL) {
         return NULL;
@@ -95,8 +93,6 @@ static APR_OPTIONAL_FN_TYPE(ap_register_include_handler) * sqrl_reg_ssi;
             apr_hash_set(form, key, APR_HASH_KEY_STRING, values);
         }
         APR_ARRAY_PUSH(values, char *) = value;
-        /*element = apr_array_push(values);
-         *element = apr_pstrdup(pool, value);*/
     }
 
     return form;
@@ -149,10 +145,93 @@ static apr_size_t read_body(request_rec * r, char **body, apr_size_t limit)
     return count;
 }
 
+/**
+ * Encode binary data to URL-safe base64.
+ * http://tools.ietf.org/html/rfc4648
+ * @param p Memory pool to allocate the returned encoded string.
+ * @param plain Binary data to encode. '\0' does not terminate the data.
+ * @param plain_len Number of bytes in plain to encode.
+ * @return Base64url encoded string. Terminated by '\0'.
+ */
+char *sqrl_base64url_encode(apr_pool_t * p, const unsigned char *plain,
+                            unsigned int plain_len)
+{
+    char *encoded;
+    char *i;
+    int base64_len;
+
+    /* Use apache to generate the standard base64 string */
+    encoded = apr_palloc(p, apr_base64_encode_len(plain_len) + 1);
+    base64_len = apr_base64_encode_binary(encoded, plain, plain_len);
+    encoded[base64_len] = '\0';
+
+    /* Make the base64 string URL-safe */
+    i = encoded;
+    while (*i != '\0') {
+        switch (*i) {
+        case '+':
+            *i = '-';
+            break;
+        case '/':
+            *i = '_';
+            break;
+        case '=':
+            *i = '\0';
+            goto loop_end;
+            /* default: Valid character */
+        }
+        ++i;
+    }
+  loop_end:
+
+    return encoded;
+}
+
+unsigned char *sqrl_base64url_decode(apr_pool_t * p, char *encoded)
+{
+    unsigned char *plain;
+    char *i;
+    int plain_len;
+
+    /* Make the base64 string URL-safe */
+    i = encoded;
+    while (*i != '\0') {
+        switch (*i) {
+        case '-':
+            *i = '+';
+            break;
+        case '_':
+            *i = '/';
+            break;
+            /* default: Valid character */
+        }
+        ++i;
+    }
+
+    /* Use apache to generate the standard base64 string */
+    plain = apr_palloc(p, apr_base64_decode_len(encoded) + 1);
+    plain_len = apr_base64_decode_binary(plain, encoded);
+    plain[plain_len] = '\0';
+
+    return plain;
+}
+
+static void escape_hex(char *dest, const unsigned char *src,
+                       apr_size_t srclen)
+{
+    static char hex[16] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+        'a', 'b', 'c', 'd', 'e', 'f'
+    };
+    apr_size_t i, j;
+    for (i = 0, j = 0; i < srclen; ++i) {
+        dest[j++] = hex[src[i] >> 4];
+        dest[j++] = hex[src[i] & 0x0f];
+    }
+}
+
 static apr_int32_t bytes_to_int32(unsigned char bytes[4])
 {
-    return ((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | (bytes[3])
-        );
+    return ((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | (bytes[3]));
 }
 
 typedef struct
@@ -171,7 +250,8 @@ typedef struct
     float version;
     apr_array_header_t *options;
     unsigned char *key;
-    apr_size_t key_len;
+    apr_size_t sig_len;
+    unsigned char *sig;
 } sqrl_rec;
 
 typedef struct
@@ -190,12 +270,12 @@ module AP_MODULE_DECLARE_DATA sqrl_module;
  * SQRL functions
  */
 
-static sqrl_nut_rec *parse_sqrl_nut(apr_pool_t * p, const char *nut)
+static sqrl_nut_rec *parse_sqrl_nut(apr_pool_t * p, char *nut)
 {
     sqrl_nut_rec *sqrl_nut = apr_palloc(p, sizeof(sqrl_nut_rec));
-    unsigned char *nut_bytes = apr_palloc(p, strlen(nut));
+    unsigned char *nut_bytes;
 
-    apr_base64_decode_binary(nut_bytes, nut);
+    nut_bytes = sqrl_base64url_decode(p, nut);
     sqrl_nut->timestamp = apr_time_from_sec(bytes_to_int32(nut_bytes));
     sqrl_nut->counter = bytes_to_int32(nut_bytes + 4);
     sqrl_nut->nonce = apr_palloc(p, 4);
@@ -204,24 +284,6 @@ static sqrl_nut_rec *parse_sqrl_nut(apr_pool_t * p, const char *nut)
     memcpy(sqrl_nut->ip_hash, (nut_bytes + 12), 4);
 
     return sqrl_nut;
-}
-
-static int check_ip_hash(apr_pool_t * p, sqrl_nut_rec * nut)
-{
-    return 0;
-}
-
-static void escape_hex(char *dest, const unsigned char *src,
-                       apr_size_t srclen)
-{
-    static char hex[16] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-        'a', 'b', 'c', 'd', 'e', 'f'
-    };
-    apr_size_t i, j;
-    for (i = 0, j = 0; i < srclen; ++i) {
-        dest[j++] = hex[src[i] >> 4];
-        dest[j++] = hex[src[i] & 0x0f];
-    }
 }
 
 sqrl_rec *parse_sqrl(request_rec * r, const char *url)
@@ -273,9 +335,7 @@ sqrl_rec *parse_sqrl(request_rec * r, const char *url)
     if (!value) {
         return NULL;
     }
-    sqrl->key_len = apr_base64_decode_len(value);
-    sqrl->key = apr_palloc(p, sqrl->key_len);
-    apr_base64_decode_binary(sqrl->key, value);
+    sqrl->key = sqrl_base64url_decode(p, value);
 
     values = apr_hash_get(form_data, "sqrlver", APR_HASH_KEY_STRING);
     value = APR_ARRAY_IDX(values, 0, char *);
@@ -324,52 +384,10 @@ sqrl_rec *parse_sqrl(request_rec * r, const char *url)
                   "nut->ip_hash = %s", i, sqrl->nut->counter, nonce_hex,
                   ip_hash_hex);
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
-                  "sid = %s ; sqrlkey = %s ; sqrlver = %f", sqrl->session_id,
-                  sqrlkey_hex, sqrl->version);
+                  "session_id = %s ; sqrlkey = %s ; sqrlver = %f",
+                  sqrl->session_id, sqrlkey_hex, sqrl->version);
 
     return sqrl;
-}
-
-/**
- * Encode binary data to URL-safe base64.
- * http://tools.ietf.org/html/rfc4648
- * @param p Memory pool to allocate the returned encoded string.
- * @param plain Binary data to encode. '\0' does not terminate the data.
- * @param plain_len Number of bytes in plain to encode.
- * @return Base64url encoded string. Terminated by '\0'.
- */
-char *sqrl_base64url_encode(apr_pool_t * p, const unsigned char *plain,
-                            unsigned int plain_len)
-{
-    char *encoded;
-    char *i;
-    int base64_len;
-
-    /* Use apache to generate the standard base64 string */
-    encoded = apr_palloc(p, apr_base64_encode_len(plain_len) + 1);
-    base64_len = apr_base64_encode_binary(encoded, plain, plain_len);
-    encoded[base64_len] = '\0';
-
-    /* Make the base64 string URL-safe */
-    i = encoded;
-    while (*i != '\0') {
-        switch (*i) {
-        case '+':
-            *i = '-';
-            break;
-        case '/':
-            *i = '_';
-            break;
-        case '=':
-            *i = '\0';
-            goto loop_end;
-            /* default: Valid character */
-        }
-        ++i;
-    }
-  loop_end:
-
-    return encoded;
 }
 
 #define SESSION_ID_LEN 16
@@ -490,9 +508,8 @@ static int authenticate_sqrl(request_rec * r)
     apr_size_t clen;            /* Content length */
     apr_size_t blen;            /* Body length */
     apr_hash_t *params;         /* Parsed parameters */
-    apr_hash_index_t *param;    /* Current parameter */
-    const char *key;            /* Parameter key */
     apr_array_header_t *values; /* Parameter value */
+    char *value;                /* Parameter value */
     sqrl_rec *sqrl;
 
     conf = ap_get_module_config(r->per_dir_config, &sqrl_module);
@@ -534,46 +551,24 @@ static int authenticate_sqrl(request_rec * r)
     blen = read_body(r, &body, clen);
 
     sqrl = parse_sqrl(r, uri);
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "session_id = %s",
-                  sqrl->session_id);
+
+    /* Parse the form data in the body */
+    apr_hash_t *form_data;
+    form_data = parse_form_data(r->pool, body, 10);
+
+    /* Get the signature */
+    values = apr_hash_get(form_data, "sqrlsig", APR_HASH_KEY_STRING);
+    value = APR_ARRAY_IDX(values, 0, char *);
+    sqrl->sig = sqrl_base64url_decode(r->pool, value);
+    value = apr_palloc(r->pool, 65);
+    escape_hex(value, sqrl->sig, 32);
+    *(value + 64) = '\0';
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "sqrlsig = %s", value);
 
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "hostname = %s", hostname);
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "uri = %s", uri);
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "blen = %zu", blen);
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "body = %s", body);
-
-    ap_set_content_type(r, "text/html;charset=us-ascii");
-    ap_rprintf(r,
-               "<!DOCTYPE html>\n<html>\n<head><title>SQRL</title></head>\n"
-               "<body>\n<pre>hostname = %s</pre>\n<pre>uri = %s</pre><br/>\n"
-               "<table>\n<caption>Querystring</caption>\n", hostname, uri);
-
-    for (param = apr_hash_first(r->pool, params); param != NULL;
-         param = apr_hash_next(param)) {
-        int i;
-        apr_hash_this(param, (const void **) &key, NULL, (void *) &values);
-        for (i = 0; i < values->nelts; ++i) {
-            ap_rprintf(r, "<tr><td>%s</td><td>%s</td></tr>\n", key,
-                       APR_ARRAY_IDX(values, i, char *));
-        }
-    }
-
-    ap_rprintf(r,
-               "</table>\n<br/><pre>body = %s</pre><br/>\n"
-               "<table>\n<caption>Body</caption>\n", body);
-
-    params = parse_form_data(r->pool, body, 10);
-    for (param = apr_hash_first(r->pool, params); param != NULL;
-         param = apr_hash_next(param)) {
-        int i;
-        apr_hash_this(param, (const void **) &key, NULL, (void *) &values);
-        for (i = 0; i < values->nelts; ++i) {
-            ap_rprintf(r, "<tr><td>%s</td><td>%s</td></tr>\n", key,
-                       APR_ARRAY_IDX(values, i, char *));
-        }
-    }
-
-    ap_rputs("</table>\n</body>\n</html>\n", r);
 
     return OK;
 }
