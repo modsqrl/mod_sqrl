@@ -45,7 +45,8 @@ static APR_OPTIONAL_FN_TYPE(ap_register_include_handler) * sqrl_reg_ssi;
  * @return Hashtable of parsed parameters. Because a key can have multiple
  *         values, the hashtable value is an array of parameter values.
  */
- static apr_hash_t *parse_form_data(apr_pool_t * pool, char *str, int limit)
+     static apr_hash_t *parse_form_data(apr_pool_t * pool, char *str,
+                                        int limit)
 {
     apr_hash_t *form;
     apr_array_header_t *values;
@@ -108,14 +109,15 @@ static APR_OPTIONAL_FN_TYPE(ap_register_include_handler) * sqrl_reg_ssi;
  */
 static apr_size_t read_body(request_rec * r, char **body, apr_size_t limit)
 {
-    apr_status_t status;
+    char *body0;
     apr_size_t bytes,           /* Bytes remaining in body buffer
                                  * and bytes read from the brigade */
                count = 0;       /* Bytes read count */
     apr_bucket_brigade *bb;
+    apr_status_t status;
 
     /* Allocate the body buffer */
-    *body = apr_palloc(r->pool, limit + 1);
+    body0 = apr_palloc(r->pool, limit + 1);
 
     /* Create a brigade to pull in data from the input filters */
     bb = apr_brigade_create(r->pool, r->connection->bucket_alloc);
@@ -128,7 +130,7 @@ static apr_size_t read_body(request_rec * r, char **body, apr_size_t limit)
         if (status == APR_SUCCESS) {
             /* Read data from the brigade */
             bytes = limit - count;
-            status = apr_brigade_flatten(bb, (*body) + count, &bytes);
+            status = apr_brigade_flatten(bb, body0 + count, &bytes);
             if (status != APR_SUCCESS) {
                 ap_log_rerror(APLOG_MARK, LOG_DEBUG, status, r, "reading bb");
             }
@@ -140,7 +142,9 @@ static apr_size_t read_body(request_rec * r, char **body, apr_size_t limit)
     } while ((status == APR_SUCCESS) && (count < limit));
 
     /* NULL terminate */
-    body[count] = '\0';
+    body0[count] = '\0';
+
+    *body = body0;
 
     return count;
 }
@@ -187,13 +191,11 @@ char *sqrl_base64url_encode(apr_pool_t * p, const unsigned char *plain,
     return encoded;
 }
 
-unsigned char *sqrl_base64url_decode(apr_pool_t * p, char *encoded)
+int sqrl_base64url_decode(unsigned char *plain, char *encoded)
 {
-    unsigned char *plain;
-    char *i;
-    int plain_len;
+    register char *i;
 
-    /* Make the base64 string URL-safe */
+    /* Convert the URL-safe version back to normal */
     i = encoded;
     while (*i != '\0') {
         switch (*i) {
@@ -209,11 +211,7 @@ unsigned char *sqrl_base64url_decode(apr_pool_t * p, char *encoded)
     }
 
     /* Use apache to generate the standard base64 string */
-    plain = apr_palloc(p, apr_base64_decode_len(encoded) + 1);
-    plain_len = apr_base64_decode_binary(plain, encoded);
-    plain[plain_len] = '\0';
-
-    return plain;
+    return apr_base64_decode_binary(plain, encoded);
 }
 
 static void escape_hex(char *dest, const unsigned char *src,
@@ -231,7 +229,8 @@ static void escape_hex(char *dest, const unsigned char *src,
 
 static apr_int32_t bytes_to_int32(unsigned char bytes[4])
 {
-    return ((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | (bytes[3]));
+    return ((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) |
+            (bytes[3]));
 }
 
 typedef struct
@@ -273,9 +272,9 @@ module AP_MODULE_DECLARE_DATA sqrl_module;
 static sqrl_nut_rec *parse_sqrl_nut(apr_pool_t * p, char *nut)
 {
     sqrl_nut_rec *sqrl_nut = apr_palloc(p, sizeof(sqrl_nut_rec));
-    unsigned char *nut_bytes;
+    unsigned char *nut_bytes = apr_palloc(p, strlen(nut));
 
-    nut_bytes = sqrl_base64url_decode(p, nut);
+    sqrl_base64url_decode(nut_bytes, nut);
     sqrl_nut->timestamp = apr_time_from_sec(bytes_to_int32(nut_bytes));
     sqrl_nut->counter = bytes_to_int32(nut_bytes + 4);
     sqrl_nut->nonce = apr_palloc(p, 4);
@@ -335,7 +334,8 @@ sqrl_rec *parse_sqrl(request_rec * r, const char *url)
     if (!value) {
         return NULL;
     }
-    sqrl->key = sqrl_base64url_decode(p, value);
+    sqrl->key = apr_palloc(p, strlen(value));
+    sqrl_base64url_decode(sqrl->key, value);
 
     values = apr_hash_get(form_data, "sqrlver", APR_HASH_KEY_STRING);
     value = APR_ARRAY_IDX(values, 0, char *);
@@ -511,6 +511,9 @@ static int authenticate_sqrl(request_rec * r)
     apr_array_header_t *values; /* Parameter value */
     char *value;                /* Parameter value */
     sqrl_rec *sqrl;
+    char *url;
+    unsigned long long sig_len, url_len;
+    int verified;
 
     conf = ap_get_module_config(r->per_dir_config, &sqrl_module);
 
@@ -559,24 +562,44 @@ static int authenticate_sqrl(request_rec * r)
     /* Get the signature */
     values = apr_hash_get(form_data, "sqrlsig", APR_HASH_KEY_STRING);
     value = APR_ARRAY_IDX(values, 0, char *);
-    sqrl->sig = sqrl_base64url_decode(r->pool, value);
-    value = apr_palloc(r->pool, 65);
-    escape_hex(value, sqrl->sig, 32);
-    *(value + 64) = '\0';
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "sqrlsig = %s", value);
+    sqrl->sig = apr_palloc(r->pool, strlen(value));
+    sig_len = sqrl_base64url_decode(sqrl->sig, value);
+    value = apr_palloc(r->pool, sig_len * 2 + 1);
+    escape_hex(value, sqrl->sig, sig_len);
+    value[sig_len * 2] = '\0';
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "sqrlsig = %s ; sig_len = %lu",
+                  value, (unsigned long) sig_len);
+
+    /* Verify the signature */
+    url = apr_palloc(r->pool, sig_len);
+    verified =
+        crypto_sign_open((unsigned char *) url, &url_len, sqrl->sig, sig_len,
+                         sqrl->key);
+    if (verified == 0) {
+        url[url_len] = '\0';
+        ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r,
+                      "I think it's verified: %s", url);
+        verified = HTTP_OK;
+    }
+    else {
+        ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r,
+                      "I think it's not verified");
+        verified = HTTP_BAD_REQUEST;
+    }
 
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "hostname = %s", hostname);
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "uri = %s", uri);
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "blen = %zu", blen);
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "body = %s", body);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "blen = %lu",
+                  (unsigned long) blen);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "body = %s", (body + 8));
 
-    return OK;
+    return verified;
 }
 
 static int sign_sqrl(request_rec * r)
 {
     unsigned char *private, *public, *signature;
-    char *public64, *signature64;
+    char *public_hex, *private_hex, *signature_hex, *public64, *signature64;
     char *url, *end, *pipe;
     apr_size_t url_len;
     unsigned long long signature_len;
@@ -614,13 +637,23 @@ static int sign_sqrl(request_rec * r)
 
     /* Generate the public key */
     public = apr_palloc(r->pool, crypto_sign_publickeybytes());
-    private = apr_palloc(r->pool, crypto_sign_secretkeybytes());        /* TODO */
+    private = apr_palloc(r->pool, crypto_sign_secretkeybytes());
     rv = crypto_sign_keypair(public, private);
     if (rv) {
         ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r,
                       "Error generating the public key");
         return HTTP_INTERNAL_SERVER_ERROR;
     }
+
+    public_hex = apr_palloc(r->pool, crypto_sign_publickeybytes() * 2 + 1);
+    private_hex = apr_palloc(r->pool, crypto_sign_secretkeybytes() * 2 + 1);
+    escape_hex(public_hex, public, crypto_sign_publickeybytes());
+    escape_hex(private_hex, private, crypto_sign_secretkeybytes());
+    public_hex[crypto_sign_publickeybytes() * 2] = '\0';
+    private_hex[crypto_sign_secretkeybytes() * 2] = '\0';
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
+                  "public key = %s ; private key = %s", public_hex,
+                  private_hex);
 
     /* Encode the public key in base64 */
     public64 =
@@ -632,7 +665,7 @@ static int sign_sqrl(request_rec * r)
                     public64, NULL);
 
     /* Sign the URL */
-    signature = apr_palloc(r->pool, crypto_sign_bytes());
+    signature = apr_palloc(r->pool, strlen(url) + crypto_sign_BYTES);
     rv = crypto_sign(signature, &signature_len, (unsigned char *) url,
                      strlen(url), private);
     if (rv) {
@@ -640,9 +673,14 @@ static int sign_sqrl(request_rec * r)
         return HTTP_INTERNAL_SERVER_ERROR;
     }
 
+    signature_hex = apr_palloc(r->pool, signature_len * 2 + 1);
+    escape_hex(signature_hex, signature, signature_len);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
+                  "signature = %s ; sig len = %lu", signature_hex,
+                  (unsigned long) signature_len);
+
     /* Encode the signature in base64 */
-    signature64 =
-        sqrl_base64url_encode(r->pool, signature, crypto_sign_bytes());
+    signature64 = sqrl_base64url_encode(r->pool, signature, signature_len);
 
     /* Build the reponse */
     response =
@@ -662,7 +700,7 @@ static int sign_sqrl(request_rec * r)
         return HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    return OK;
+    return HTTP_OK;
 }
 
 
