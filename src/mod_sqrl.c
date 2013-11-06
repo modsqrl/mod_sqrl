@@ -31,6 +31,7 @@ limitations under the License.
 #include "sodium/crypto_hash.h"
 #include "sodium/crypto_sign.h"
 #include "sodium/randombytes.h"
+#include "sodium/utils.h"
 #include "sodium/version.h"
 
 static APR_OPTIONAL_FN_TYPE(ap_register_include_handler) * sqrl_reg_ssi;
@@ -214,17 +215,20 @@ int sqrl_base64url_decode(unsigned char *plain, char *encoded)
     return apr_base64_decode_binary(plain, encoded);
 }
 
-static void escape_hex(char *dest, const unsigned char *src,
-                       apr_size_t srclen)
+static char *bin2hex(apr_pool_t *p, const unsigned char *bin,
+                     const apr_size_t binlen, apr_size_t *hexlen)
 {
-    static char hex[16] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-        'a', 'b', 'c', 'd', 'e', 'f'
-    };
-    apr_size_t i, j;
-    for (i = 0, j = 0; i < srclen; ++i) {
-        dest[j++] = hex[src[i] >> 4];
-        dest[j++] = hex[src[i] & 0x0f];
+    apr_size_t hexlen0 = binlen * 2U;
+    char *hex = apr_palloc(p, hexlen0 + 1U);
+
+    if(hexlen != NULL) {
+        *hexlen = hexlen0;
     }
+
+    sodium_bin2hex(hex, hexlen0, bin, binlen);
+    *(hex + hexlen0) = '\0';
+
+    return hex;
 }
 
 static apr_int32_t bytes_to_int32(unsigned char bytes[4])
@@ -367,17 +371,11 @@ sqrl_rec *parse_sqrl(request_rec * r, const char *url)
     i = apr_palloc(r->pool, APR_RFC822_DATE_LEN);
     apr_rfc822_date(i, sqrl->nut->timestamp);
     /* Stringify nonce */
-    nonce_hex = apr_palloc(r->pool, 9);
-    escape_hex(nonce_hex, sqrl->nut->nonce, 4);
-    *(nonce_hex + 8) = '\0';
+    nonce_hex = bin2hex(r->pool, sqrl->nut->nonce, 4U, NULL);
     /* Stringify ip_hash */
-    ip_hash_hex = apr_palloc(r->pool, 9);
-    escape_hex(ip_hash_hex, sqrl->nut->ip_hash, 4);
-    *(ip_hash_hex + 8) = '\0';
+    ip_hash_hex = bin2hex(r->pool, sqrl->nut->ip_hash, 4U, NULL);
     /* Stringify sqrlkey */
-    sqrlkey_hex = apr_palloc(r->pool, 65);
-    escape_hex(sqrlkey_hex, sqrl->key, 32);
-    *(sqrlkey_hex + 64) = '\0';
+    sqrlkey_hex = bin2hex(r->pool, sqrl->key, 32U, NULL);
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "url = %s", sqrl->url);
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
                   "nut->timestamp = %s ; nut->counter = %d ; nut->nonce = %s ; "
@@ -564,9 +562,7 @@ static int authenticate_sqrl(request_rec * r)
     value = APR_ARRAY_IDX(values, 0, char *);
     sqrl->sig = apr_palloc(r->pool, strlen(value));
     sig_len = sqrl_base64url_decode(sqrl->sig, value);
-    value = apr_palloc(r->pool, sig_len * 2 + 1);
-    escape_hex(value, sqrl->sig, sig_len);
-    value[sig_len * 2] = '\0';
+    value = bin2hex(r->pool, sqrl->sig, sig_len, NULL);
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "sqrlsig = %s ; sig_len = %lu",
                   value, (unsigned long) sig_len);
 
@@ -636,8 +632,8 @@ static int sign_sqrl(request_rec * r)
     }
 
     /* Generate the public key */
-    public = apr_palloc(r->pool, crypto_sign_publickeybytes());
-    private = apr_palloc(r->pool, crypto_sign_secretkeybytes());
+    public = apr_palloc(r->pool, crypto_sign_PUBLICKEYBYTES);
+    private = apr_palloc(r->pool, crypto_sign_SECRETKEYBYTES);
     rv = crypto_sign_keypair(public, private);
     if (rv) {
         ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r,
@@ -645,19 +641,15 @@ static int sign_sqrl(request_rec * r)
         return HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    public_hex = apr_palloc(r->pool, crypto_sign_publickeybytes() * 2 + 1);
-    private_hex = apr_palloc(r->pool, crypto_sign_secretkeybytes() * 2 + 1);
-    escape_hex(public_hex, public, crypto_sign_publickeybytes());
-    escape_hex(private_hex, private, crypto_sign_secretkeybytes());
-    public_hex[crypto_sign_publickeybytes() * 2] = '\0';
-    private_hex[crypto_sign_secretkeybytes() * 2] = '\0';
+    public_hex = bin2hex(r->pool, public, crypto_sign_PUBLICKEYBYTES, NULL);
+    private_hex = bin2hex(r->pool, private, crypto_sign_SECRETKEYBYTES, NULL);
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
                   "public key = %s ; private key = %s", public_hex,
                   private_hex);
 
     /* Encode the public key in base64 */
     public64 =
-        sqrl_base64url_encode(r->pool, public, crypto_sign_publickeybytes());
+        sqrl_base64url_encode(r->pool, public, crypto_sign_PUBLICKEYBYTES);
 
     /* Complete the URL */
     url =
@@ -673,8 +665,7 @@ static int sign_sqrl(request_rec * r)
         return HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    signature_hex = apr_palloc(r->pool, signature_len * 2 + 1);
-    escape_hex(signature_hex, signature, signature_len);
+    signature_hex = bin2hex(r->pool, signature, signature_len, NULL);
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
                   "signature = %s ; sig len = %lu", signature_hex,
                   (unsigned long) signature_len);
