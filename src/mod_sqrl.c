@@ -33,247 +33,49 @@ limitations under the License.
 #include "sodium/randombytes.h"
 #include "sodium/utils.h"
 #include "sodium/version.h"
+#include "utils.h"
 
 static APR_OPTIONAL_FN_TYPE(ap_register_include_handler) * sqrl_reg_ssi;
      static APR_OPTIONAL_FN_TYPE(ap_ssi_get_tag_and_value) *
     sqrl_get_tag_and_value;
 
-/**
- * Parse application/x-www-form-urlencoded form data from a string.
- * @param pool Memory allocation pool.
- * @param str Data to parse.
- * @param limit The maxium number of parameters to parse out of the string.
- * @return Hashtable of parsed parameters. Because a key can have multiple
- *         values, the hashtable value is an array of parameter values.
- */
-     static apr_hash_t *parse_form_data(apr_pool_t * pool, char *str,
-                                        int limit)
-{
-    apr_hash_t *form;
-    apr_array_header_t *values;
-    int count;
-    const char *sep = "&";
-    char *last;
-    char *key;
-    char *value;
+     typedef struct
+     {
+         apr_time_t timestamp;
+         apr_int32_t counter;
+         unsigned char *nonce;
+         unsigned char *ip_hash;
+     } sqrl_nut_rec;
 
-    if (str == NULL) {
-        return NULL;
-    }
+     typedef struct
+     {
+         char *url;
+         sqrl_nut_rec *nut;
+         char *session_id;
+         float version;
+         apr_array_header_t *options;
+         unsigned char *key;
+         apr_size_t sig_len;
+         unsigned char *sig;
+     } sqrl_rec;
 
-    form = apr_hash_make(pool);
+     typedef struct
+     {
+         apr_int32_t counter;
+     } sqrl_svr_cfg;
 
-    /* Split string on the '&' separator */
-    for (key = apr_strtok(str, sep, &last), count = 0;
-         key != NULL && count < limit;
-         key = apr_strtok(NULL, sep, &last), ++count) {
-        for (value = key; *value; ++value) {
-            if (*value == '+') {
-                *value = ' ';
-            }
-        }
+     typedef struct
+     {
+     } sqrl_dir_cfg;
 
-        /* Split into key / value */
-        value = strchr(key, '=');
-
-        /* Unescape */
-        if (value) {
-            *value = '\0';
-            ++value;
-            ap_unescape_urlencoded(key);
-            ap_unescape_urlencoded(value);
-        }
-        else {
-            value = "";
-            ap_unescape_urlencoded(key);
-        }
-
-        /* Store in the hash */
-        values = apr_hash_get(form, key, APR_HASH_KEY_STRING);
-        if (values == NULL) {
-            values = apr_array_make(pool, 1, sizeof(char *));
-            apr_hash_set(form, key, APR_HASH_KEY_STRING, values);
-        }
-        APR_ARRAY_PUSH(values, char *) = value;
-    }
-
-    return form;
-}
-
-/**
- * Read data from the request body.
- * @param r Request to read from.
- * @param body On return, data read from the request
- *             (allocated from the request's pool).
- * @param limit The maxium number of bytes to read from the request body.
- * @return The number of bytes read from the request body.
- */
-static apr_size_t read_body(request_rec * r, char **body, apr_size_t limit)
-{
-    char *body0;
-    apr_size_t bytes,           /* Bytes remaining in body buffer
-                                 * and bytes read from the brigade */
-               count = 0;       /* Bytes read count */
-    apr_bucket_brigade *bb;
-    apr_status_t status;
-
-    /* Allocate the body buffer */
-    body0 = apr_palloc(r->pool, limit + 1);
-
-    /* Create a brigade to pull in data from the input filters */
-    bb = apr_brigade_create(r->pool, r->connection->bucket_alloc);
-
-    /* Read data from input filters */
-    do {
-        /* Get the brigade from the input filters */
-        status = ap_get_brigade(r->input_filters, bb, AP_MODE_READBYTES,
-                                APR_BLOCK_READ, limit);
-        if (status == APR_SUCCESS) {
-            /* Read data from the brigade */
-            bytes = limit - count;
-            status = apr_brigade_flatten(bb, body0 + count, &bytes);
-            if (status != APR_SUCCESS) {
-                ap_log_rerror(APLOG_MARK, LOG_DEBUG, status, r, "reading bb");
-            }
-            count += bytes;
-        }
-
-        /* Discard the data */
-        apr_brigade_cleanup(bb);
-    } while ((status == APR_SUCCESS) && (count < limit));
-
-    /* NULL terminate */
-    body0[count] = '\0';
-
-    *body = body0;
-
-    return count;
-}
-
-/**
- * Encode binary data to URL-safe base64.
- * http://tools.ietf.org/html/rfc4648
- * @param p Memory pool to allocate the returned encoded string.
- * @param plain Binary data to encode. '\0' does not terminate the data.
- * @param plain_len Number of bytes in plain to encode.
- * @return Base64url encoded string. Terminated by '\0'.
- */
-char *sqrl_base64url_encode(apr_pool_t * p, const unsigned char *plain,
-                            unsigned int plain_len)
-{
-    char *encoded;
-    char *i;
-    int base64_len;
-
-    /* Use apache to generate the standard base64 string */
-    encoded = apr_palloc(p, apr_base64_encode_len(plain_len) + 1);
-    base64_len = apr_base64_encode_binary(encoded, plain, plain_len);
-    encoded[base64_len] = '\0';
-
-    /* Make the base64 string URL-safe */
-    i = encoded;
-    while (*i != '\0') {
-        switch (*i) {
-        case '+':
-            *i = '-';
-            break;
-        case '/':
-            *i = '_';
-            break;
-        case '=':
-            *i = '\0';
-            goto loop_end;
-            /* default: Valid character */
-        }
-        ++i;
-    }
-  loop_end:
-
-    return encoded;
-}
-
-int sqrl_base64url_decode(unsigned char *plain, char *encoded)
-{
-    register char *i;
-
-    /* Convert the URL-safe version back to normal */
-    i = encoded;
-    while (*i != '\0') {
-        switch (*i) {
-        case '-':
-            *i = '+';
-            break;
-        case '_':
-            *i = '/';
-            break;
-            /* default: Valid character */
-        }
-        ++i;
-    }
-
-    /* Use apache to generate the standard base64 string */
-    return apr_base64_decode_binary(plain, encoded);
-}
-
-static char *bin2hex(apr_pool_t *p, const unsigned char *bin,
-                     const apr_size_t binlen, apr_size_t *hexlen)
-{
-    apr_size_t hexlen0 = binlen * 2U;
-    char *hex = apr_palloc(p, hexlen0 + 1U);
-
-    if(hexlen != NULL) {
-        *hexlen = hexlen0;
-    }
-
-    sodium_bin2hex(hex, hexlen0, bin, binlen);
-    *(hex + hexlen0) = '\0';
-
-    return hex;
-}
-
-static apr_int32_t bytes_to_int32(unsigned char bytes[4])
-{
-    return ((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) |
-            (bytes[3]));
-}
-
-typedef struct
-{
-    apr_time_t timestamp;
-    apr_int32_t counter;
-    unsigned char *nonce;
-    unsigned char *ip_hash;
-} sqrl_nut_rec;
-
-typedef struct
-{
-    char *url;
-    sqrl_nut_rec *nut;
-    char *session_id;
-    float version;
-    apr_array_header_t *options;
-    unsigned char *key;
-    apr_size_t sig_len;
-    unsigned char *sig;
-} sqrl_rec;
-
-typedef struct
-{
-    apr_int32_t counter;
-} sqrl_svr_cfg;
-
-typedef struct
-{
-} sqrl_dir_cfg;
-
-module AP_MODULE_DECLARE_DATA sqrl_module;
+     module AP_MODULE_DECLARE_DATA sqrl_module;
 
 
 /*
  * SQRL functions
  */
 
-static sqrl_nut_rec *parse_sqrl_nut(apr_pool_t * p, char *nut)
+     static sqrl_nut_rec *parse_sqrl_nut(apr_pool_t * p, char *nut)
 {
     sqrl_nut_rec *sqrl_nut = apr_palloc(p, sizeof(sqrl_nut_rec));
     unsigned char *nut_bytes = apr_palloc(p, strlen(nut));
