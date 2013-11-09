@@ -17,6 +17,7 @@ all: local-shared-build
 
 #   install the shared object file into Apache 
 install: install-modules-yes
+	rsync -r ../test/conf ../test/htdocs $(top_builddir)
 
 #   format the code according to apache's style guide
 format:
