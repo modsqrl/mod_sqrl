@@ -14,6 +14,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#include "httpd.h"
+#include "apr_hash.h"
+#include "apr_pools.h"
+
 
 /*
  * Parse application/x-www-form-urlencoded form data from a string.
@@ -66,8 +70,8 @@ int sqrl_base64url_decode(unsigned char *plain, char *encoded);
  *               NULL pointer.
  * @return Hexidecimal string. Terminated by '\0'.
  */
-char *bin2hex(apr_pool_t * p, const unsigned char *bin, const apr_size_t binlen,
-              apr_size_t * hexlen);
+char *bin2hex(apr_pool_t * p, const unsigned char *bin,
+              const apr_size_t binlen, apr_size_t * hexlen);
 
 /*
  * Convert 4 bytes to a 32-bit integer.
@@ -75,3 +79,10 @@ char *bin2hex(apr_pool_t * p, const unsigned char *bin, const apr_size_t binlen,
  * @return A 32-bit integer.
  */
 apr_int32_t bytes_to_int32(const unsigned char bytes[4]);
+
+/*
+ * Convert a 32-bit integer to 4 bytes.
+ * @param bytes An array of, at least, 4 bytes to store the integer.
+ * @param integer The integer to be broken up into 4 bytes.
+ */
+void int32_to_bytes(unsigned char bytes[4], apr_int32_t integer);

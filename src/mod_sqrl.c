@@ -15,17 +15,20 @@ limitations under the License.
 */
 
 #include "string.h"
+
 #include "httpd.h"
 #include "http_config.h"
-#include "http_protocol.h"
 #include "http_log.h"
+#include "http_protocol.h"
+
 #include "ap_config.h"
-#include "apr_base64.h"
 #include "apr_hash.h"
 #include "apr_optional.h"
 #include "apr_strings.h"
 #include "apr_time.h"
+
 #include "mod_include.h"
+
 #include "sodium/core.h"
 #include "sodium/crypto_auth.h"
 #include "sodium/crypto_hash.h"
@@ -33,49 +36,48 @@ limitations under the License.
 #include "sodium/randombytes.h"
 #include "sodium/utils.h"
 #include "sodium/version.h"
+
+#include "sqrl.h"
 #include "utils.h"
 
-static APR_OPTIONAL_FN_TYPE(ap_register_include_handler) * sqrl_reg_ssi;
-     static APR_OPTIONAL_FN_TYPE(ap_ssi_get_tag_and_value) *
-    sqrl_get_tag_and_value;
+/* typedef struct
+ * {
+ *     apr_time_t timestamp;
+ *     apr_int32_t counter;
+ *     unsigned char *nonce;
+ *     unsigned char *ip_hash;
+ * } sqrl_nut_rec;
+ * 
+ * typedef struct
+ * {
+ *     char *url;
+ *     sqrl_nut_rec *nut;
+ *     char *session_id;
+ *     float version;
+ *     apr_array_header_t *options;
+ *     unsigned char *key;
+ *     apr_size_t sig_len;
+ *     unsigned char *sig;
+ * } sqrl_rec;
+ */
 
-     typedef struct
-     {
-         apr_time_t timestamp;
-         apr_int32_t counter;
-         unsigned char *nonce;
-         unsigned char *ip_hash;
-     } sqrl_nut_rec;
+typedef struct
+{
+    apr_int32_t counter;
+} sqrl_svr_cfg;
 
-     typedef struct
-     {
-         char *url;
-         sqrl_nut_rec *nut;
-         char *session_id;
-         float version;
-         apr_array_header_t *options;
-         unsigned char *key;
-         apr_size_t sig_len;
-         unsigned char *sig;
-     } sqrl_rec;
+typedef struct
+{
+} sqrl_dir_cfg;
 
-     typedef struct
-     {
-         apr_int32_t counter;
-     } sqrl_svr_cfg;
-
-     typedef struct
-     {
-     } sqrl_dir_cfg;
-
-     module AP_MODULE_DECLARE_DATA sqrl_module;
+module AP_MODULE_DECLARE_DATA sqrl_module;
 
 
 /*
  * SQRL functions
  */
 
-     static sqrl_nut_rec *parse_sqrl_nut(apr_pool_t * p, char *nut)
+static sqrl_nut_rec *parse_sqrl_nut(apr_pool_t * p, char *nut)
 {
     sqrl_nut_rec *sqrl_nut = apr_palloc(p, sizeof(sqrl_nut_rec));
     unsigned char *nut_bytes = apr_palloc(p, strlen(nut));
@@ -190,22 +192,15 @@ sqrl_rec *parse_sqrl(request_rec * r, const char *url)
     return sqrl;
 }
 
-#define SESSION_ID_LEN 16
 static sqrl_rec *generate_sqrl(request_rec * r, const char *scheme,
                                const char *domain, const char *additional,
                                const char *path)
 {
-    sqrl_rec *sqrl = apr_palloc(r->pool, sizeof(sqrl_rec));
-    apr_time_t time_now = apr_time_sec(apr_time_now());
-    unsigned char *nonce = apr_palloc(r->pool, 4);
-    apr_size_t ip_len = strlen(r->useragent_ip);
-    unsigned char *ip_buff = apr_palloc(r->pool, 12 + ip_len);
-    unsigned char *ip_hash = apr_palloc(r->pool, crypto_hash_BYTES);
-    unsigned char *nut_buff = apr_palloc(r->pool, 32);
-    char *nut;
-    unsigned char *session_id_bytes;
-    size_t additional_len;
+    sqrl_rec *sqrl;
     sqrl_svr_cfg *conf;
+
+    /* Load the server config to get the counter */
+    conf = ap_get_module_config(r->server->module_config, &sqrl_module);
 
     /* Validate inputs */
     if (!scheme || *scheme == '\0') {
@@ -226,69 +221,11 @@ static sqrl_rec *generate_sqrl(request_rec * r, const char *scheme,
     }
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "path = %s", path);
 
-    /* Generate a session id */
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "Generating session id");
-    session_id_bytes = apr_palloc(r->pool, SESSION_ID_LEN);
-    randombytes(session_id_bytes, SESSION_ID_LEN);      /* libsodium PRNG */
-
-    /* Convert the session id to base64 */
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
-                  "Converting session id to base64");
-    sqrl->session_id =
-        sqrl_base64url_encode(r->pool, session_id_bytes, SESSION_ID_LEN);
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "session_id = %s",
-                  sqrl->session_id);
-
-    /* Generate a nonce */
-    randombytes(nonce, 4);
-
-    /* Load the config to get the counter */
-    conf = ap_get_module_config(r->server->module_config, &sqrl_module);
-
-    /* Build a salted IP */
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "Clients IP = %s",
-                  r->useragent_ip);
     ++conf->counter;            /* TODO increment_and_get() */
-    ip_buff[0] = time_now >> 24 & 0xff;
-    ip_buff[1] = time_now >> 16 & 0xff;
-    ip_buff[2] = time_now >> 8 & 0xff;
-    ip_buff[3] = time_now & 0xff;
-    ip_buff[4] = conf->counter >> 24 & 0xff;
-    ip_buff[5] = conf->counter >> 16 & 0xff;
-    ip_buff[6] = conf->counter >> 8 & 0xff;
-    ip_buff[7] = conf->counter & 0xff;
-    memcpy((ip_buff + 8), nonce, 4);
-    memcpy((ip_buff + 12), r->useragent_ip, ip_len);
+    sqrl_create(r->pool, &sqrl, scheme, domain, additional, path,
+                r->useragent_ip, conf->counter);
 
-    /* Hash the salted IP */
-    crypto_hash(ip_hash, ip_buff, (12 + ip_len));       /* int returned? */
-
-    /* Build the authentication URL's nut */
-    memcpy(nut_buff, ip_buff, 12);
-    nut_buff[12] = ip_hash[0];
-    nut_buff[13] = ip_hash[1];
-    nut_buff[14] = ip_hash[2];
-    nut_buff[15] = ip_hash[3];
-    /* TODO encrypt nut_buff before base64 encoding */
-    nut = sqrl_base64url_encode(r->pool, nut_buff, 16);
-
-    /* Generate the url */
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
-                  "Put it all together to make the URL");
-    if (additional && (additional_len = strlen(additional)) > 1) {
-        ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "additional = %s",
-                      additional);
-        sqrl->url =
-            apr_pstrcat(r->pool, scheme, "://", domain, additional, "|", path,
-                        "?nut=", nut, "&sid=", sqrl->session_id, NULL);
-    }
-    else {
-        ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "No additional domain");
-        sqrl->url =
-            apr_pstrcat(r->pool, scheme, "://", domain, "/", path, "?nut=",
-                        nut, "&sid=", sqrl->session_id, NULL);
-    }
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "url = %s", sqrl->url);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, sqrl_to_string(r->pool, sqrl));
 
     return sqrl;
 }
@@ -501,6 +438,9 @@ static int sign_sqrl(request_rec * r)
  * mod_include extention.
  */
 
+static APR_OPTIONAL_FN_TYPE(ap_ssi_get_tag_and_value) *
+    sqrl_get_tag_and_value;
+
 /**
  * Generate a SQRL URL and add to the SSI environment.
  * Example:
@@ -508,8 +448,8 @@ static int sign_sqrl(request_rec * r)
  * URL = <!--#echo var="sqrl_url" -->
  * Session ID = <!--#echo var="sqrl_id" -->
  */
-static apr_status_t handle_sqrl_gen(include_ctx_t * ctx, ap_filter_t * f,
-                                    apr_bucket_brigade * bb)
+     static apr_status_t handle_sqrl_gen(include_ctx_t * ctx, ap_filter_t * f,
+                                         apr_bucket_brigade * bb)
 {
     request_rec *r = f->r;
     request_rec *mr = r->main;
@@ -575,7 +515,8 @@ static int sqrl_post_config(apr_pool_t * p, apr_pool_t * plog,
     int rv;
 
     /* Retrieve mod_include's optional functions */
-    sqrl_reg_ssi = APR_RETRIEVE_OPTIONAL_FN(ap_register_include_handler);
+    APR_OPTIONAL_FN_TYPE(ap_register_include_handler) * sqrl_reg_ssi =
+        APR_RETRIEVE_OPTIONAL_FN(ap_register_include_handler);
     sqrl_get_tag_and_value =
         APR_RETRIEVE_OPTIONAL_FN(ap_ssi_get_tag_and_value);
 

@@ -16,14 +16,18 @@ limitations under the License.
 
 #include "httpd.h"
 #include "http_log.h"
+
 #include "apr_base64.h"
 #include "apr_buckets.h"
 #include "apr_hash.h"
 #include "apr_pools.h"
 #include "apr_strings.h"
 #include "apr_tables.h"
+
 #include "util_filter.h"
+
 #include "sodium/utils.h"
+
 #include "utils.h"
 
 
@@ -199,4 +203,12 @@ apr_int32_t bytes_to_int32(const unsigned char bytes[4])
 {
     return ((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) |
             (bytes[3]));
+}
+
+void int32_to_bytes(unsigned char bytes[4], apr_int32_t integer)
+{
+    *(bytes + 0) = integer >> 24 & 0xff;
+    *(bytes + 1) = integer >> 16 & 0xff;
+    *(bytes + 2) = integer >> 8 & 0xff;
+    *(bytes + 3) = integer >> 0 & 0xff;
 }
