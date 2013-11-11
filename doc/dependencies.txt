@@ -10,7 +10,7 @@ make
 sudo make install
 
 libapreq
-./configure --prefix=/usr/local --with-apache2-apxs=/usr/local/apache24/bin/apxs CFLAGS="-O2 -mtune=native"
+./configure --prefix=/usr/local/apache24 --with-apache2-apxs=/usr/local/apache24/bin/apxs CFLAGS="-O2 -mtune=native"
 make
 sudo make install
 

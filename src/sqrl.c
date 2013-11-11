@@ -18,9 +18,7 @@ limitations under the License.
 #include "apr_strings.h"
 #include "apr_time.h"
 
-#include "sodium/crypto_auth.h"
 #include "sodium/crypto_hash.h"
-#include "sodium/crypto_sign.h"
 #include "sodium/crypto_stream_aes256estream.h"
 #include "sodium/randombytes.h"
 #include "sodium/utils.h"
@@ -29,7 +27,7 @@ limitations under the License.
 #include "utils.h"
 
 
-static char *ck_null(char *val)
+static const char *ck_null(const char *val)
 {
     if (val) {
         return val;
@@ -63,28 +61,30 @@ const char *sqrl_to_string(apr_pool_t * pool, sqrl_rec * sqrl)
         ip_hash = "null";
     }
     if (sqrl->key) {
-        key =
-            bin2hex(pool, sqrl->key, crypto_sign_ed25519_PUBLICKEYBYTES,
-                    NULL);
+        key = bin2hex(pool, sqrl->key, sqrl->key_len, NULL);
     }
     else {
         key = "null";
     }
     if (sqrl->sig) {
-        sig =
-            bin2hex(pool, sqrl->sig, crypto_sign_ed25519_SECRETKEYBYTES,
-                    NULL);
+        sig = bin2hex(pool, sqrl->sig, sqrl->sig_len, NULL);
     }
     else {
         sig = "null";
     }
 
     return apr_psprintf(pool,
-                        "sqrl_rec{url=%s,sqrl_nut_rec{timestamp=%s,counter=%d,nonce=%s,ip_hash=%s},session_id=%s,version=%f,key=%s,sig_len=%lu,sig=%s}",
+                        "sqrl_rec{url=%s,sqrl_nut_rec{timestamp=%s,counter=%d,"
+                        "nonce=%s,ip_hash=%s},session_id=%s,version=%f,"
+                        "options=%s,key_len=%d,key=%s,sig_len=%d,sig=%s}",
                         ck_null(sqrl->url), timestamp,
                         (sqrl->nut->counter ? sqrl->nut->counter : 0), nonce,
                         ip_hash, ck_null(sqrl->session_id),
-                        (sqrl->version ? sqrl->version : 0.0), key,
+                        (sqrl->version ? sqrl->version : 0.0),
+                        (sqrl->options ?
+                         apr_array_pstrcat(pool, sqrl->options,
+                                           ',') : "null"),
+                        (sqrl->key_len ? sqrl->key_len : 0), key,
                         (sqrl->sig_len ? sqrl->sig_len : 0), sig);
 }
 
@@ -93,6 +93,7 @@ int sqrl_create(apr_pool_t * pool, sqrl_rec ** sqrl, const char *scheme,
                 const char *ip_addr, apr_int32_t counter)
 {
     sqrl_rec *sq;
+    sqrl_nut_rec *nut;
     unsigned char *session_id_bytes;
     apr_size_t ip_len;
     unsigned char *ip_buff;
@@ -111,32 +112,35 @@ int sqrl_create(apr_pool_t * pool, sqrl_rec ** sqrl, const char *scheme,
         sqrl_base64url_encode(pool, session_id_bytes, SQRL_SESSION_ID_BYTES);
 
     /* Build the nut struct */
-    sq->nut = apr_palloc(pool, sizeof(sqrl_nut_rec));
-    sq->nut->timestamp = apr_time_sec(apr_time_now());
-    sq->nut->counter = counter;
-    sq->nut->nonce = apr_palloc(pool, 4);
-    randombytes(sq->nut->nonce, 4);
+    nut = apr_palloc(pool, sizeof(sqrl_nut_rec));
+    nut->timestamp = apr_time_sec(apr_time_now());
+    nut->counter = counter;
+    nut->nonce = apr_palloc(pool, 4);
+    randombytes(nut->nonce, 4);
 
     /* Build a salted IP */
     ip_len = strlen(ip_addr);
     ip_buff = apr_palloc(pool, 12 + ip_len);
     /* Add the current time */
-    int32_to_bytes(ip_buff, (apr_int32_t) sq->nut->timestamp);
+    int32_to_bytes(ip_buff, (apr_int32_t) nut->timestamp);
     /* Add the counter */
-    int32_to_bytes((ip_buff + 4), sq->nut->counter);
+    int32_to_bytes((ip_buff + 4), nut->counter);
     /* Add a nonce */
-    memcpy((ip_buff + 8), sq->nut->nonce, 4);
+    memcpy((ip_buff + 8), nut->nonce, 4);
     /* Add the IP */
     memcpy((ip_buff + 12), ip_addr, ip_len);
 
     /* Hash the salted IP and add to the nut struct */
-    sq->nut->ip_hash = apr_palloc(pool, crypto_hash_BYTES);
-    crypto_hash(sq->nut->ip_hash, ip_buff, (12 + ip_len));
+    nut->ip_hash = apr_palloc(pool, crypto_hash_BYTES);
+    crypto_hash(nut->ip_hash, ip_buff, (12 + ip_len));
 
     /* Build the authentication URL's nut */
     nut_buff = apr_palloc(pool, 16);
     memcpy(nut_buff, ip_buff, 12);
-    memcpy((nut_buff + 12), sq->nut->ip_hash, 4);
+    memcpy((nut_buff + 12), nut->ip_hash, 4);
+
+    /* Set nut */
+    sq->nut = nut;
 
     /* TODO encrypt nut_buff before base64 encoding */
 
@@ -158,6 +162,7 @@ int sqrl_create(apr_pool_t * pool, sqrl_rec ** sqrl, const char *scheme,
     /* Initialize the remaining fields */
     sq->version = 0.0;
     sq->options = NULL;
+    sq->key_len = 0;
     sq->key = NULL;
     sq->sig_len = 0;
     sq->sig = NULL;
@@ -166,4 +171,22 @@ int sqrl_create(apr_pool_t * pool, sqrl_rec ** sqrl, const char *scheme,
     *sqrl = sq;
 
     return SQRL_OK;
+}
+
+int sqrl_verify(apr_pool_t * p, const sqrl_rec * sqrl)
+{
+    size_t url_len = strlen(sqrl->url);
+    unsigned long long sig_len = SQRL_SIGN_BYTES + url_len, msg_len;
+    unsigned char *sig = apr_palloc(p, sig_len);
+    unsigned char *msg = apr_palloc(p, sig_len);
+    int verified;
+
+    /* Build signature */
+    memcpy(sig, sqrl->sig, SQRL_SIGN_BYTES);
+    memcpy((sig + SQRL_SIGN_BYTES), sqrl->url, url_len);
+
+    /* Verify signature */
+    verified = sqrl_crypto_sign_open(msg, &msg_len, sig, sig_len, sqrl->key);
+
+    return verified;
 }

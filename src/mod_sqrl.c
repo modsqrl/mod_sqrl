@@ -28,11 +28,11 @@ limitations under the License.
 #include "apr_time.h"
 
 #include "mod_include.h"
+#include "apreq2/apreq_module_apache2.h"
+#include "apreq2/apreq_module.h"
 
 #include "sodium/core.h"
-#include "sodium/crypto_auth.h"
 #include "sodium/crypto_hash.h"
-#include "sodium/crypto_sign.h"
 #include "sodium/randombytes.h"
 #include "sodium/utils.h"
 #include "sodium/version.h"
@@ -40,26 +40,6 @@ limitations under the License.
 #include "sqrl.h"
 #include "utils.h"
 
-/* typedef struct
- * {
- *     apr_time_t timestamp;
- *     apr_int32_t counter;
- *     unsigned char *nonce;
- *     unsigned char *ip_hash;
- * } sqrl_nut_rec;
- * 
- * typedef struct
- * {
- *     char *url;
- *     sqrl_nut_rec *nut;
- *     char *session_id;
- *     float version;
- *     apr_array_header_t *options;
- *     unsigned char *key;
- *     apr_size_t sig_len;
- *     unsigned char *sig;
- * } sqrl_rec;
- */
 
 typedef struct
 {
@@ -78,121 +58,6 @@ module AP_MODULE_DECLARE_DATA sqrl_module;
 /*
  * SQRL functions
  */
-
-static sqrl_nut_rec *parse_sqrl_nut(apr_pool_t * p, char *nut)
-{
-    sqrl_nut_rec *sqrl_nut = apr_palloc(p, sizeof(sqrl_nut_rec));
-    unsigned char *nut_bytes = apr_palloc(p, strlen(nut));
-
-    sqrl_base64url_decode(nut_bytes, nut);
-    sqrl_nut->timestamp = apr_time_from_sec(bytes_to_int32(nut_bytes));
-    sqrl_nut->counter = bytes_to_int32(nut_bytes + 4);
-    sqrl_nut->nonce = apr_palloc(p, 4);
-    memcpy(sqrl_nut->nonce, (nut_bytes + 8), 4);
-    sqrl_nut->ip_hash = apr_palloc(p, 4);
-    memcpy(sqrl_nut->ip_hash, (nut_bytes + 12), 4);
-
-    return sqrl_nut;
-}
-
-sqrl_rec *parse_sqrl(request_rec * r, const char *url)
-{
-    apr_pool_t *p = r->pool;
-    sqrl_rec *sqrl = apr_palloc(p, sizeof(sqrl_rec));
-    apr_hash_t *form_data;
-    apr_array_header_t *values;
-    char *value, **val;
-    char *i, **opt;
-    char *nonce_hex, *ip_hash_hex, *sqrlkey_hex;
-
-    sqrl->url = apr_pstrdup(p, url);
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "url = %s", sqrl->url);
-
-    /* Find the query string */
-    i = strchr(sqrl->url, '?');
-    if (i == NULL) {
-        return NULL;
-    }
-    ++i;
-
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "query = %s", i);
-
-    /* Parse the query string */
-    form_data = parse_form_data(p, i, 50);
-    /* The form processing modifies the url so it needs to be re-copied */
-    sqrl->url = apr_pstrdup(p, url);
-
-    values = apr_hash_get(form_data, "nut", APR_HASH_KEY_STRING);
-    value = APR_ARRAY_IDX(values, 0, char *);
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "nut = %s", value);
-    if (!value) {
-        return NULL;
-    }
-    sqrl->nut = parse_sqrl_nut(p, value);
-
-    values = apr_hash_get(form_data, "sid", APR_HASH_KEY_STRING);
-    value = APR_ARRAY_IDX(values, 0, char *);
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "session_id = %s", value);
-    if (!value) {
-        return NULL;
-    }
-    sqrl->session_id = apr_pstrdup(p, value);
-
-    values = apr_hash_get(form_data, "sqrlkey", APR_HASH_KEY_STRING);
-    value = APR_ARRAY_IDX(values, 0, char *);
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "sqrlkey = %s", value);
-    if (!value) {
-        return NULL;
-    }
-    sqrl->key = apr_palloc(p, strlen(value));
-    sqrl_base64url_decode(sqrl->key, value);
-
-    values = apr_hash_get(form_data, "sqrlver", APR_HASH_KEY_STRING);
-    value = APR_ARRAY_IDX(values, 0, char *);
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "sqrlver = %s", value);
-    if (!value) {
-        sqrl->version = 1;
-    }
-    else {
-        sqrl->version = strtod(value, &i);
-        if (*i != '\0') {
-            sqrl->version = 1;
-        }
-    }
-
-    values = apr_hash_get(form_data, "sqrlopt", APR_HASH_KEY_STRING);
-    value = APR_ARRAY_IDX(values, 0, char *);
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "sqrlopt = %s", value);
-    if (value) {
-        sqrl->options = apr_array_make(p, 1, sizeof(char *));
-        i = NULL;
-        for (opt = (char **) apr_strtok(value, ",", &i);
-             (opt); opt = (char **) apr_strtok(NULL, ",", &i)) {
-            val = apr_array_push(sqrl->options);
-            val = opt;
-        }
-    }
-
-    /* Stringify date */
-    i = apr_palloc(r->pool, APR_RFC822_DATE_LEN);
-    apr_rfc822_date(i, sqrl->nut->timestamp);
-    /* Stringify nonce */
-    nonce_hex = bin2hex(r->pool, sqrl->nut->nonce, 4U, NULL);
-    /* Stringify ip_hash */
-    ip_hash_hex = bin2hex(r->pool, sqrl->nut->ip_hash, 4U, NULL);
-    /* Stringify sqrlkey */
-    sqrlkey_hex = bin2hex(r->pool, sqrl->key, 32U, NULL);
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "url = %s", sqrl->url);
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
-                  "nut->timestamp = %s ; nut->counter = %d ; nut->nonce = %s ; "
-                  "nut->ip_hash = %s", i, sqrl->nut->counter, nonce_hex,
-                  ip_hash_hex);
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
-                  "session_id = %s ; sqrlkey = %s ; sqrlver = %f",
-                  sqrl->session_id, sqrlkey_hex, sqrl->version);
-
-    return sqrl;
-}
 
 static sqrl_rec *generate_sqrl(request_rec * r)
 {
@@ -226,6 +91,147 @@ static sqrl_rec *generate_sqrl(request_rec * r)
     return sqrl;
 }
 
+static sqrl_nut_rec *sqrl_nut_parse(apr_pool_t * p, const char *nut)
+{
+    sqrl_nut_rec *sqrl_nut = apr_palloc(p, sizeof(sqrl_nut_rec));
+    unsigned char *nut_bytes;
+    int nut_len;
+
+    nut_bytes = sqrl_base64url_decode(p, nut, &nut_len);
+    if (nut_len != 16) {
+        return NULL;
+    }
+
+    sqrl_nut->timestamp = apr_time_from_sec(bytes_to_int32(nut_bytes));
+    sqrl_nut->counter = bytes_to_int32(nut_bytes + 4);
+    sqrl_nut->nonce = apr_palloc(p, 4);
+    memcpy(sqrl_nut->nonce, (nut_bytes + 8), 4);
+    sqrl_nut->ip_hash = apr_palloc(p, 4);
+    memcpy(sqrl_nut->ip_hash, (nut_bytes + 12), 4);
+
+    return sqrl_nut;
+}
+
+static apr_array_header_t *sqrl_options_parse(apr_pool_t * p,
+                                              const char *options)
+{
+    apr_array_header_t *array = apr_array_make(p, 0, sizeof(char *));
+    char *option, *last, *options0 = apr_pstrdup(p, options);
+
+    for (option = apr_strtok(options0, ",", &last);
+         option != NULL; option = apr_strtok(NULL, ",", &last)) {
+        APR_ARRAY_PUSH(array, char *) = option;
+    }
+
+    return array;
+}
+
+static apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl)
+{
+    sqrl_rec *sq = apr_palloc(r->pool, sizeof(sqrl_rec));
+    sqrl_svr_cfg *sconf;
+    apreq_handle_t *apreq;
+    const apr_table_t *params;
+    char *last;
+    const char *nut64, *key64, *sig64, *version, *options;
+    unsigned char *session_id;
+    int session_id_len;
+    apr_status_t rv;
+
+    /* Load the server config for domain properties */
+    sconf = ap_get_module_config(r->server->module_config, &sqrl_module);
+
+    /* Initiate libapreq */
+    apreq = apreq_handle_apache2(r);
+
+    /* Parse the parameters from the query string */
+    rv = apreq_args(apreq, &params);
+    if (rv != APR_SUCCESS) {
+        return rv;
+    }
+
+    /* Build the URL */
+    sq->url = apr_pstrcat(r->pool, sconf->scheme, "://", sconf->domain,
+                          r->unparsed_uri, NULL);
+
+    /* Get the nut */
+    nut64 = apr_table_get(params, "nut");
+    if (!nut64) {
+        return SQRL_MISSING_NUT;
+    }
+    /* Parse the nut */
+    sq->nut = sqrl_nut_parse(r->pool, nut64);
+    if (!sq->nut) {
+        return SQRL_INVALID_NUT;
+    }
+
+    /* Get the session id */
+    sq->session_id = apr_table_get(params, "sid");
+    if (!sq->session_id) {
+        return SQRL_MISSING_SID;
+    }
+    /* Decode the session id */
+    session_id =
+        sqrl_base64url_decode(r->pool, sq->session_id, &session_id_len);
+    if (session_id_len != SQRL_SESSION_ID_BYTES) {
+        return SQRL_INVALID_SID;
+    }
+
+    /* Get the public key */
+    key64 = apr_table_get(params, "sqrlkey");
+    if (!key64) {
+        return SQRL_MISSING_KEY;
+    }
+    /* Decode the public key */
+    sq->key = sqrl_base64url_decode(r->pool, key64, &sq->key_len);
+    if (sq->key_len != SQRL_PUBLIC_KEY_BYTES) {
+        return SQRL_INVALID_SID;
+    }
+
+    /* Get the version */
+    version = apr_table_get(params, "sqrlver");
+    if (version) {
+        sq->version = (float) strtod(version, &last);
+        if (*last != '\0') {
+            return SQRL_INVALID_VER;
+        }
+    }
+    else {
+        sq->version = 1.0;
+    }
+
+    /* Get options */
+    options = apr_table_get(params, "sqrlopt");
+    if (options) {
+        sq->options = sqrl_options_parse(r->pool, options);
+    }
+    else {
+        sq->options = apr_array_make(r->pool, 0, sizeof(char *));
+    }
+
+    /* Parse the parameters from the request body */
+    rv = apreq_body(apreq, &params);
+    if (rv != APR_SUCCESS) {
+        return rv;
+    }
+
+    /* Get the signature */
+    sig64 = apr_table_get(params, "sqrlsig");
+    if (!sig64) {
+        return SQRL_MISSING_SIG;
+    }
+    /* Decode the signature */
+    sq->sig = sqrl_base64url_decode(r->pool, sig64, &sq->sig_len);
+    if (sq->sig_len < SQRL_SIGN_BYTES) {
+        return SQRL_INVALID_SIG;
+    }
+
+    /* Set sqrl */
+    *sqrl = sq;
+
+    return APR_SUCCESS;
+}
+
 
 /*
  * SQRL Authentication handler
@@ -234,18 +240,8 @@ static sqrl_rec *generate_sqrl(request_rec * r)
 static int authenticate_sqrl(request_rec * r)
 {
     sqrl_dir_cfg *conf;
-    const char *hostname;
-    char *uri;
-    char *body;
-    apr_size_t limit = 2048;    /* The body's maximum size, in bytes */
-    apr_size_t clen;            /* Content length */
-    apr_size_t blen;            /* Body length */
-    apr_hash_t *params;         /* Parsed parameters */
-    apr_array_header_t *values; /* Parameter value */
-    char *value;                /* Parameter value */
     sqrl_rec *sqrl;
-    char *url;
-    unsigned long long sig_len, url_len;
+    apr_status_t rv;
     int verified;
 
     conf = ap_get_module_config(r->per_dir_config, &sqrl_module);
@@ -260,69 +256,25 @@ static int authenticate_sqrl(request_rec * r)
 
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "Verifying SQRL code ...");
 
-    hostname = r->hostname;
-    uri = r->unparsed_uri;
-    params = parse_form_data(r->pool, r->args, 10);
-
-    {
-        /* Get the Content-Length header */
-        const char *length = apr_table_get(r->headers_in, "Content-Length");
-
-        if (length != NULL) {
-            /* Convert to long */
-            clen = strtol(length, NULL, 0);
-            /* Reject if it's too large */
-            if (clen > limit) {
-                ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
-                              "Request is too large (%zu/%zu)", clen, limit);
-                return HTTP_REQUEST_ENTITY_TOO_LARGE;
-
-            }
-        }
-        else {
-            /* Unknown size, set length to the max */
-            clen = limit;
-        }
+    rv = sqrl_parse(r, &sqrl);
+    if (rv != APR_SUCCESS) {
+        ap_log_rerror(APLOG_MARK, LOG_WARNING, rv, r,
+                      "Error parsing the sqrl");
+        return HTTP_BAD_REQUEST;
     }
-    blen = read_body(r, &body, clen);
-
-    sqrl = parse_sqrl(r, uri);
-
-    /* Parse the form data in the body */
-    apr_hash_t *form_data;
-    form_data = parse_form_data(r->pool, body, 10);
-
-    /* Get the signature */
-    values = apr_hash_get(form_data, "sqrlsig", APR_HASH_KEY_STRING);
-    value = APR_ARRAY_IDX(values, 0, char *);
-    sqrl->sig = apr_palloc(r->pool, strlen(value));
-    sig_len = sqrl_base64url_decode(sqrl->sig, value);
-    value = bin2hex(r->pool, sqrl->sig, sig_len, NULL);
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "sqrlsig = %s ; sig_len = %lu",
-                  value, (unsigned long) sig_len);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, sqrl_to_string(r->pool, sqrl));
 
     /* Verify the signature */
-    url = apr_palloc(r->pool, sig_len);
-    verified =
-        crypto_sign_open((unsigned char *) url, &url_len, sqrl->sig, sig_len,
-                         sqrl->key);
+    verified = sqrl_verify(r->pool, sqrl);
     if (verified == 0) {
-        url[url_len] = '\0';
-        ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r,
-                      "I think it's verified: %s", url);
+        ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "SQRL verified");
         verified = HTTP_OK;
     }
     else {
-        ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r,
-                      "I think it's not verified");
+        ap_log_rerror(APLOG_MARK, LOG_WARNING, verified, r,
+                      "SQRL failed verification");
         verified = HTTP_BAD_REQUEST;
     }
-
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "hostname = %s", hostname);
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "uri = %s", uri);
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "blen = %lu",
-                  (unsigned long) blen);
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "body = %s", (body + 8));
 
     return verified;
 }
@@ -367,24 +319,23 @@ static int sign_sqrl(request_rec * r)
     }
 
     /* Generate the public key */
-    public = apr_palloc(r->pool, crypto_sign_PUBLICKEYBYTES);
-    private = apr_palloc(r->pool, crypto_sign_SECRETKEYBYTES);
-    rv = crypto_sign_keypair(public, private);
+    public = apr_palloc(r->pool, SQRL_PUBLIC_KEY_BYTES);
+    private = apr_palloc(r->pool, SQRL_PRIVATE_KEY_BYTES);
+    rv = sqrl_crypto_sign_keypair(public, private);
     if (rv) {
         ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r,
                       "Error generating the public key");
         return HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    public_hex = bin2hex(r->pool, public, crypto_sign_PUBLICKEYBYTES, NULL);
-    private_hex = bin2hex(r->pool, private, crypto_sign_SECRETKEYBYTES, NULL);
+    public_hex = bin2hex(r->pool, public, SQRL_PUBLIC_KEY_BYTES, NULL);
+    private_hex = bin2hex(r->pool, private, SQRL_PRIVATE_KEY_BYTES, NULL);
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
                   "public key = %s ; private key = %s", public_hex,
                   private_hex);
 
     /* Encode the public key in base64 */
-    public64 =
-        sqrl_base64url_encode(r->pool, public, crypto_sign_PUBLICKEYBYTES);
+    public64 = sqrl_base64url_encode(r->pool, public, SQRL_PUBLIC_KEY_BYTES);
 
     /* Complete the URL */
     url =
@@ -392,9 +343,9 @@ static int sign_sqrl(request_rec * r)
                     public64, NULL);
 
     /* Sign the URL */
-    signature = apr_palloc(r->pool, strlen(url) + crypto_sign_BYTES);
-    rv = crypto_sign(signature, &signature_len, (unsigned char *) url,
-                     strlen(url), private);
+    signature = apr_palloc(r->pool, SQRL_SIGN_BYTES + strlen(url));
+    rv = sqrl_crypto_sign(signature, &signature_len, (unsigned char *) url,
+                          strlen(url), private);
     if (rv) {
         ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r, "Error signing the URL");
         return HTTP_INTERNAL_SERVER_ERROR;
@@ -406,9 +357,9 @@ static int sign_sqrl(request_rec * r)
                   (unsigned long) signature_len);
 
     /* Encode the signature in base64 */
-    signature64 = sqrl_base64url_encode(r->pool, signature, signature_len);
+    signature64 = sqrl_base64url_encode(r->pool, signature, SQRL_SIGN_BYTES);
 
-    /* Build the reponse */
+    /* Build the response */
     response =
         apr_pstrcat(r->pool, "sqrlurl=", url, "&sqrlsig=", signature64, NULL);
 
@@ -488,7 +439,6 @@ static APR_OPTIONAL_FN_TYPE(ap_ssi_get_tag_and_value) *
 
     /* Only generate a sqrl if it's actually going to be used */
     if (url || session_id) {
-        /* TODO Get generate_sqrl parameters from the modules config */
         sqrl = generate_sqrl(r);
         if (!sqrl) {
             SSI_CREATE_ERROR_BUCKET(ctx, f, bb);
