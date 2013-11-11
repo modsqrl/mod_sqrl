@@ -63,11 +63,13 @@ limitations under the License.
 
 typedef struct
 {
+    const char *scheme, *domain;
     apr_int32_t counter;
 } sqrl_svr_cfg;
 
 typedef struct
 {
+    const char *additional, *path;
 } sqrl_dir_cfg;
 
 module AP_MODULE_DECLARE_DATA sqrl_module;
@@ -192,38 +194,32 @@ sqrl_rec *parse_sqrl(request_rec * r, const char *url)
     return sqrl;
 }
 
-static sqrl_rec *generate_sqrl(request_rec * r, const char *scheme,
-                               const char *domain, const char *additional,
-                               const char *path)
+static sqrl_rec *generate_sqrl(request_rec * r)
 {
     sqrl_rec *sqrl;
-    sqrl_svr_cfg *conf;
+    sqrl_svr_cfg *sconf;
+    sqrl_dir_cfg *dconf;
+    const char *scheme, *domain, *additional, *path;
 
     /* Load the server config to get the counter */
-    conf = ap_get_module_config(r->server->module_config, &sqrl_module);
+    sconf = ap_get_module_config(r->server->module_config, &sqrl_module);
+    scheme = sconf->scheme;
+    domain = sconf->domain;
 
-    /* Validate inputs */
-    if (!scheme || *scheme == '\0') {
-        ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "Setting scheme to 'qrl'");
-        scheme = "qrl";
-    }
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "scheme = %s", scheme);
-    if (!domain || *domain == '\0') {
-        ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
-                      "Setting domain to self's domain");
-        domain = r->server->server_hostname;
-    }
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "domain = %s", domain);
-    if (!path || *path == '\0') {
-        ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
-                      "Setting path to 'sqrl_auth'");
-        path = "sqrl_auth";
-    }
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "path = %s", path);
+    /* Load the directory config to get the URL properties */
+    dconf = ap_get_module_config(r->per_dir_config, &sqrl_module);
+    additional = dconf->additional;
+    path = dconf->path;
 
-    ++conf->counter;            /* TODO increment_and_get() */
+    /* Log config */
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
+                  "scheme = %s, domain = %s, additional = %s, path = %s",
+                  scheme, domain, (additional == NULL ? "null" : additional),
+                  path);
+
+    ++sconf->counter;           /* TODO increment_and_get() */
     sqrl_create(r->pool, &sqrl, scheme, domain, additional, path,
-                r->useragent_ip, conf->counter);
+                r->useragent_ip, sconf->counter);
 
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, sqrl_to_string(r->pool, sqrl));
 
@@ -493,7 +489,7 @@ static APR_OPTIONAL_FN_TYPE(ap_ssi_get_tag_and_value) *
     /* Only generate a sqrl if it's actually going to be used */
     if (url || session_id) {
         /* TODO Get generate_sqrl parameters from the modules config */
-        sqrl = generate_sqrl(r, NULL, NULL, "/test", NULL);
+        sqrl = generate_sqrl(r);
         if (!sqrl) {
             SSI_CREATE_ERROR_BUCKET(ctx, f, bb);
             return APR_SUCCESS;
@@ -509,10 +505,25 @@ static APR_OPTIONAL_FN_TYPE(ap_ssi_get_tag_and_value) *
     return APR_SUCCESS;
 }
 
+/*
+ * Configuration
+ */
+
+static const char *UNSET = NULL;
+
 static int sqrl_post_config(apr_pool_t * p, apr_pool_t * plog,
                             apr_pool_t * ptemp, server_rec * s)
 {
+    sqrl_svr_cfg *sconf;
     int rv;
+
+    /* Load the server config to validate the domain */
+    sconf = ap_get_module_config(s->module_config, &sqrl_module);
+
+    /* If a domain isn't configured, set it to this server's domain */
+    if (sconf->domain == UNSET) {
+        sconf->domain = s->server_hostname;
+    }
 
     /* Retrieve mod_include's optional functions */
     APR_OPTIONAL_FN_TYPE(ap_register_include_handler) * sqrl_reg_ssi =
@@ -539,18 +550,22 @@ static int sqrl_post_config(apr_pool_t * p, apr_pool_t * plog,
 }
 
 
-/*
- * Configuration
- */
-
-static void *create_server_config(apr_pool_t * pool, server_rec * s)
+static void *create_server_config(apr_pool_t * p, server_rec * s)
 {
-    sqrl_svr_cfg *conf = apr_palloc(pool, sizeof(sqrl_svr_cfg));
-    unsigned char *counter_bytes = apr_palloc(pool, 4);
-    randombytes(counter_bytes, 4);
-    conf->counter = ((counter_bytes[0] << 24) |
-                     (counter_bytes[1] << 16) |
-                     (counter_bytes[2] << 8) | (counter_bytes[3]));
+    sqrl_svr_cfg *conf = apr_palloc(p, sizeof(sqrl_svr_cfg));
+    unsigned char *counter_bytes = apr_palloc(p, 4);
+
+    conf->scheme = "qrl";
+    conf->domain = UNSET,       /* Default is set in post_config() */
+        randombytes(counter_bytes, 4);
+    conf->counter = bytes_to_int32(counter_bytes);
+    return conf;
+}
+
+static void *create_dir_config(apr_pool_t * p, char *dir)
+{
+    sqrl_dir_cfg *conf = apr_palloc(p, sizeof(sqrl_dir_cfg));
+    conf->additional = UNSET, conf->path = "sqrl";
     return conf;
 }
 
@@ -574,7 +589,7 @@ static void register_hooks(apr_pool_t * pool)
 /* Module Data Structure */
 module AP_MODULE_DECLARE_DATA sqrl_module = {
     STANDARD20_MODULE_STUFF,
-    NULL,                       /* create per-directory configuration record */
+    create_dir_config,          /* create per-directory configuration record */
     NULL,                       /* merge per-directory configuration records */
     create_server_config,       /* create per-server configuration record */
     NULL,                       /* merge per-server configuration records */

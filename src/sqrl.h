@@ -47,3 +47,10 @@ const char *sqrl_to_string(apr_pool_t * pool, sqrl_rec * sqrl);
 int sqrl_create(apr_pool_t * pool, sqrl_rec ** sqrl, const char *scheme,
                 const char *domain, const char *additional, const char *path,
                 const char *ip_addr, apr_int32_t counter);
+
+int sqrl_parse(apr_pool_t * pool, sqrl_rec ** sqrl, const char *scheme,
+               const char *domain, const char *uri);
+
+int sqrl_verify(apr_pool_t * pool, const char *scheme, const char *domain,
+                const char *uri, const unsigned char *key,
+                const unsigned char *sig, apr_size_t sig_len);

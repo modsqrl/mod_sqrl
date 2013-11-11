@@ -23,6 +23,9 @@ install: install-modules-yes
 format:
 	indent -i4 -npsl -di0 -br -nce -d0 -cli0 -npcs -nfc1 -nut *.[ch]
 
+update_js-nacl:
+	curl -s -o ../test/htdocs/nacl_factory.js 'https://raw.github.com/tonyg/js-nacl/master/lib/nacl_factory.js'
+
 #   cleanup
 clean:
 	-rm -f mod_sqrl.o mod_sqrl.lo mod_sqrl.slo mod_sqrl.la 

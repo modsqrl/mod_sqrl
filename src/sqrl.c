@@ -113,7 +113,7 @@ int sqrl_create(apr_pool_t * pool, sqrl_rec ** sqrl, const char *scheme,
     /* Build the nut struct */
     sq->nut = apr_palloc(pool, sizeof(sqrl_nut_rec));
     sq->nut->timestamp = apr_time_sec(apr_time_now());
-    sq->nut->counter = counter; /* TODO increment_and_get() */
+    sq->nut->counter = counter;
     sq->nut->nonce = apr_palloc(pool, 4);
     randombytes(sq->nut->nonce, 4);
 
@@ -154,6 +154,13 @@ int sqrl_create(apr_pool_t * pool, sqrl_rec ** sqrl, const char *scheme,
             apr_pstrcat(pool, scheme, "://", domain, "/", path, "?nut=",
                         nut64, "&sid=", sq->session_id, NULL);
     }
+
+    /* Initialize the remaining fields */
+    sq->version = 0.0;
+    sq->options = NULL;
+    sq->key = NULL;
+    sq->sig_len = 0;
+    sq->sig = NULL;
 
     /* Set sqrl */
     *sqrl = sq;
