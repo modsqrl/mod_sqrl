@@ -15,6 +15,11 @@ limitations under the License.
 */
 
 #include "apr_pools.h"
+#include "sqrl.h"
+
+
+#ifndef SQRL_UTILS_H
+#define SQRL_UTILS_H
 
 
 /*
@@ -65,3 +70,14 @@ apr_int32_t bytes_to_int32(const unsigned char bytes[4]);
  * @param integer The integer to be broken up into 4 bytes.
  */
 void int32_to_bytes(unsigned char bytes[4], apr_int32_t integer);
+
+/*
+ * Create a string representation of a sqrl_rec.
+ * @param pool Allocate the new string.
+ * @param sqrl sqrl_rec to stringify.
+ * @return String of the sqrl_rec.
+ */
+const char *sqrl_to_string(apr_pool_t * pool, sqrl_rec * sqrl);
+
+
+#endif

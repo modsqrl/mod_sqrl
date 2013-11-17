@@ -14,9 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#include "httpd.h"
 #include "apr_tables.h"
 #include "sodium/crypto_stream_aes256estream.h"
 #include "sodium/crypto_sign_ed25519.h"
+
+
+#ifndef SQRL_H
+#define SQRL_H
 
 
 #define SQRL_OK 0
@@ -63,11 +68,11 @@ typedef struct
     const unsigned char *sig;
 } sqrl_rec;
 
+sqrl_rec *sqrl_create(request_rec * r);
 
-const char *sqrl_to_string(apr_pool_t * pool, sqrl_rec * sqrl);
-
-int sqrl_create(apr_pool_t * pool, sqrl_rec ** sqrl, const char *scheme,
-                const char *domain, const char *additional, const char *path,
-                const char *ip_addr, apr_int32_t counter);
+apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl);
 
 int sqrl_verify(apr_pool_t * pool, const sqrl_rec * sqrl);
+
+
+#endif

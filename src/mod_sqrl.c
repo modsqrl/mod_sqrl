@@ -1,5 +1,5 @@
 /*
-Copyright 2013 Chris Steinhoff
+Copyright 2013 modsqrl
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -59,12 +59,18 @@ module AP_MODULE_DECLARE_DATA sqrl_module;
  * SQRL functions
  */
 
-static sqrl_rec *generate_sqrl(request_rec * r)
+sqrl_rec *sqrl_create(request_rec * r)
 {
     sqrl_rec *sqrl;
     sqrl_svr_cfg *sconf;
     sqrl_dir_cfg *dconf;
     const char *scheme, *domain, *additional, *path;
+    sqrl_nut_rec *nut;
+    unsigned char *session_id_bytes;
+    apr_size_t ip_len;
+    unsigned char *ip_buff;
+    unsigned char *nut_buff;
+    char *nut64;
 
     /* Load the server config to get the counter */
     sconf = ap_get_module_config(r->server->module_config, &sqrl_module);
@@ -82,13 +88,98 @@ static sqrl_rec *generate_sqrl(request_rec * r)
                   scheme, domain, (additional == NULL ? "null" : additional),
                   path);
 
+    /* Allocate the sqrl struct */
+    sqrl = apr_palloc(r->pool, sizeof(sqrl_rec));
+
+    /* Generate a session id */
+    session_id_bytes = apr_palloc(r->pool, SQRL_SESSION_ID_BYTES);
+    /* libsodium PRNG */
+    randombytes(session_id_bytes, SQRL_SESSION_ID_BYTES);
+
+    /* Convert the session id to base64 */
+    sqrl->session_id =
+        sqrl_base64url_encode(r->pool, session_id_bytes, SQRL_SESSION_ID_BYTES);
+
+    /* Increment the counter */
     ++sconf->counter;           /* TODO increment_and_get() */
-    sqrl_create(r->pool, &sqrl, scheme, domain, additional, path,
-                r->useragent_ip, sconf->counter);
+
+    /* Build the nut struct */
+    nut = apr_palloc(r->pool, sizeof(sqrl_nut_rec));
+    nut->timestamp = apr_time_sec(apr_time_now());
+    nut->counter = sconf->counter;
+    nut->nonce = apr_palloc(r->pool, 4);
+    randombytes(nut->nonce, 4);
+
+    /* Build a salted IP */
+    ip_len = strlen(r->useragent_ip);
+    ip_buff = apr_palloc(r->pool, 12 + ip_len);
+    /* Add the current time */
+    int32_to_bytes(ip_buff, (apr_int32_t) nut->timestamp);
+    /* Add the counter */
+    int32_to_bytes((ip_buff + 4), nut->counter);
+    /* Add a nonce */
+    memcpy((ip_buff + 8), nut->nonce, 4);
+    /* Add the IP */
+    memcpy((ip_buff + 12), r->useragent_ip, ip_len);
+
+    /* Hash the salted IP and add to the nut struct */
+    nut->ip_hash = apr_palloc(r->pool, crypto_hash_BYTES);
+    crypto_hash(nut->ip_hash, ip_buff, (12 + ip_len));
+
+    /* Build the authentication URL's nut */
+    nut_buff = apr_palloc(r->pool, 16);
+    memcpy(nut_buff, ip_buff, 12);
+    memcpy((nut_buff + 12), nut->ip_hash, 4);
+
+    /* Set nut */
+    sqrl->nut = nut;
+
+    /* TODO encrypt nut_buff before base64 encoding */
+
+    /* Encode the nut as base64 */
+    nut64 = sqrl_base64url_encode(r->pool, nut_buff, 16);
+
+    /* Generate the url */
+    if (additional && strlen(additional) > 1) {
+        sqrl->url =
+            apr_pstrcat(r->pool, scheme, "://", domain, additional, "|", path,
+                        "?nut=", nut64, "&sid=", sqrl->session_id, NULL);
+    }
+    else {
+        sqrl->url =
+            apr_pstrcat(r->pool, scheme, "://", domain, "/", path, "?nut=",
+                        nut64, "&sid=", sqrl->session_id, NULL);
+    }
+
+    /* Initialize the remaining fields */
+    sqrl->version = 0.0;
+    sqrl->options = NULL;
+    sqrl->key_len = 0;
+    sqrl->key = NULL;
+    sqrl->sig_len = 0;
+    sqrl->sig = NULL;
 
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, sqrl_to_string(r->pool, sqrl));
 
     return sqrl;
+}
+
+int sqrl_verify(apr_pool_t * p, const sqrl_rec * sqrl)
+{
+    size_t url_len = strlen(sqrl->url);
+    unsigned long long sig_len = SQRL_SIGN_BYTES + url_len, msg_len;
+    unsigned char *sig = apr_palloc(p, sig_len);
+    unsigned char *msg = apr_palloc(p, sig_len);
+    int verified;
+
+    /* Build signature */
+    memcpy(sig, sqrl->sig, SQRL_SIGN_BYTES);
+    memcpy((sig + SQRL_SIGN_BYTES), sqrl->url, url_len);
+
+    /* Verify signature */
+    verified = sqrl_crypto_sign_open(msg, &msg_len, sig, sig_len, sqrl->key);
+
+    return verified;
 }
 
 static sqrl_nut_rec *sqrl_nut_parse(apr_pool_t * p, const char *nut)
@@ -126,7 +217,7 @@ static apr_array_header_t *sqrl_options_parse(apr_pool_t * p,
     return array;
 }
 
-static apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl)
+apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl)
 {
     sqrl_rec *sq = apr_palloc(r->pool, sizeof(sqrl_rec));
     sqrl_svr_cfg *sconf;
@@ -439,7 +530,7 @@ static APR_OPTIONAL_FN_TYPE(ap_ssi_get_tag_and_value) *
 
     /* Only generate a sqrl if it's actually going to be used */
     if (url || session_id) {
-        sqrl = generate_sqrl(r);
+        sqrl = sqrl_create(r);
         if (!sqrl) {
             SSI_CREATE_ERROR_BUCKET(ctx, f, bb);
             return APR_SUCCESS;

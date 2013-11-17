@@ -17,9 +17,11 @@ limitations under the License.
 #include "apr_base64.h"
 #include "apr_pools.h"
 #include "apr_strings.h"
+#include "apr_time.h"
 
 #include "sodium/utils.h"
 
+#include "sqrl.h"
 #include "utils.h"
 
 
@@ -118,4 +120,65 @@ void int32_to_bytes(unsigned char bytes[4], apr_int32_t integer)
     *(bytes + 1) = integer >> 16 & 0xff;
     *(bytes + 2) = integer >> 8 & 0xff;
     *(bytes + 3) = integer >> 0 & 0xff;
+}
+
+static const char *ck_null(const char *val)
+{
+    if (val) {
+        return val;
+    }
+    else {
+        return "null";
+    }
+}
+
+const char *sqrl_to_string(apr_pool_t * pool, sqrl_rec * sqrl)
+{
+    char *timestamp, *nonce, *ip_hash, *key, *sig;
+
+    if (sqrl->nut->timestamp) {
+        timestamp = apr_palloc(pool, APR_RFC822_DATE_LEN);
+        apr_rfc822_date(timestamp, apr_time_from_sec(sqrl->nut->timestamp));
+    }
+    else {
+        timestamp = "null";
+    }
+    if (sqrl->nut->nonce) {
+        nonce = bin2hex(pool, sqrl->nut->nonce, 4U, NULL);
+    }
+    else {
+        nonce = "null";
+    }
+    if (sqrl->nut->nonce) {
+        ip_hash = bin2hex(pool, sqrl->nut->ip_hash, 4U, NULL);
+    }
+    else {
+        ip_hash = "null";
+    }
+    if (sqrl->key) {
+        key = bin2hex(pool, sqrl->key, sqrl->key_len, NULL);
+    }
+    else {
+        key = "null";
+    }
+    if (sqrl->sig) {
+        sig = bin2hex(pool, sqrl->sig, sqrl->sig_len, NULL);
+    }
+    else {
+        sig = "null";
+    }
+
+    return apr_psprintf(pool,
+                        "sqrl_rec{url=%s,sqrl_nut_rec{timestamp=%s,counter=%d,"
+                        "nonce=%s,ip_hash=%s},session_id=%s,version=%f,"
+                        "options=%s,key_len=%d,key=%s,sig_len=%d,sig=%s}",
+                        ck_null(sqrl->url), timestamp,
+                        (sqrl->nut->counter ? sqrl->nut->counter : 0), nonce,
+                        ip_hash, ck_null(sqrl->session_id),
+                        (sqrl->version ? sqrl->version : 0.0),
+                        (sqrl->options ?
+                         apr_array_pstrcat(pool, sqrl->options,
+                                           ',') : "null"),
+                        (sqrl->key_len ? sqrl->key_len : 0), key,
+                        (sqrl->sig_len ? sqrl->sig_len : 0), sig);
 }
