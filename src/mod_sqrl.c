@@ -33,6 +33,7 @@ limitations under the License.
 
 #include "sodium/core.h"
 #include "sodium/crypto_hash.h"
+#include "sodium/crypto_stream_aes256estream.h"
 #include "sodium/randombytes.h"
 #include "sodium/utils.h"
 #include "sodium/version.h"
@@ -44,6 +45,7 @@ limitations under the License.
 typedef struct
 {
     const char *scheme, *domain;
+    const unsigned char *nut_key;
     apr_int32_t counter;
 } sqrl_svr_cfg;
 
@@ -70,6 +72,7 @@ sqrl_rec *sqrl_create(request_rec * r)
     apr_size_t ip_len;
     unsigned char *ip_buff;
     unsigned char *nut_buff;
+    unsigned char *nut_crypt;
     char *nut64;
 
     /* Load the server config to get the counter */
@@ -135,10 +138,14 @@ sqrl_rec *sqrl_create(request_rec * r)
     /* Set nut */
     sqrl->nut = nut;
 
-    /* TODO encrypt nut_buff before base64 encoding */
+    /* Encrypt the nut */
+    nut_crypt = apr_palloc(r->pool, 16);
+    crypto_stream_aes256estream_xor(nut_crypt, nut_buff, 16U,
+                                    (unsigned char *) sqrl->session_id,
+                                    sconf->nut_key);
 
     /* Encode the nut as base64 */
-    nut64 = sqrl_base64url_encode(r->pool, nut_buff, 16);
+    nut64 = sqrl_base64url_encode(r->pool, nut_crypt, 16);
 
     /* Generate the url */
     if (additional && strlen(additional) > 1) {
@@ -183,16 +190,10 @@ int sqrl_verify(apr_pool_t * p, const sqrl_rec * sqrl)
     return verified;
 }
 
-static sqrl_nut_rec *sqrl_nut_parse(apr_pool_t * p, const char *nut)
+static sqrl_nut_rec *sqrl_nut_parse(apr_pool_t * p,
+                                    const unsigned char *nut_bytes)
 {
     sqrl_nut_rec *sqrl_nut = apr_palloc(p, sizeof(sqrl_nut_rec));
-    unsigned char *nut_bytes;
-    int nut_len;
-
-    nut_bytes = sqrl_base64url_decode(p, nut, &nut_len);
-    if (nut_len != 16) {
-        return NULL;
-    }
 
     sqrl_nut->timestamp = bytes_to_int32(nut_bytes);
     sqrl_nut->counter = bytes_to_int32(nut_bytes + 4);
@@ -226,8 +227,8 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl)
     const apr_table_t *params;
     char *last;
     const char *nut64, *key64, *sig64, *version, *options;
-    unsigned char *session_id;
-    int session_id_len;
+    unsigned char *session_id, *nut_bytes, *nut_crypt;
+    int session_id_len, nut_len;
     apr_status_t rv;
 
     /* Load the server config for domain properties */
@@ -246,17 +247,6 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl)
     sq->url = apr_pstrcat(r->pool, sconf->scheme, "://", sconf->domain,
                           r->unparsed_uri, NULL);
 
-    /* Get the nut */
-    nut64 = apr_table_get(params, "nut");
-    if (!nut64) {
-        return SQRL_MISSING_NUT;
-    }
-    /* Parse the nut */
-    sq->nut = sqrl_nut_parse(r->pool, nut64);
-    if (!sq->nut) {
-        return SQRL_INVALID_NUT;
-    }
-
     /* Get the session id */
     sq->session_id = apr_table_get(params, "sid");
     if (!sq->session_id) {
@@ -267,6 +257,29 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl)
         sqrl_base64url_decode(r->pool, sq->session_id, &session_id_len);
     if (session_id_len != SQRL_SESSION_ID_BYTES) {
         return SQRL_INVALID_SID;
+    }
+
+    /* Get the nut */
+    nut64 = apr_table_get(params, "nut");
+    if (!nut64) {
+        return SQRL_MISSING_NUT;
+    }
+    /* Decode the nut */
+    nut_bytes = sqrl_base64url_decode(r->pool, nut64, &nut_len);
+    if (nut_len != 16) {
+        return SQRL_INVALID_NUT;
+    }
+
+    /* Decrypt the nut */
+    nut_crypt = apr_palloc(r->pool, 16);
+    crypto_stream_aes256estream_xor(nut_crypt, nut_bytes, 16U,
+                                    (unsigned char *) sq->session_id,
+                                    sconf->nut_key);
+
+    /* Parse the nut */
+    sq->nut = sqrl_nut_parse(r->pool, nut_crypt);
+    if (!sq->nut) {
+        return SQRL_INVALID_NUT;
     }
 
     /* Get the public key */
@@ -644,10 +657,14 @@ static void *create_server_config(apr_pool_t * p, server_rec * s)
 {
     sqrl_svr_cfg *conf = apr_palloc(p, sizeof(sqrl_svr_cfg));
     unsigned char *counter_bytes = apr_palloc(p, 4);
+    unsigned char *nut_key = apr_palloc(p,
+                                        crypto_stream_aes256estream_KEYBYTES);
 
     conf->scheme = "qrl";
-    conf->domain = UNSET,       /* Default is set in post_config() */
-        randombytes(counter_bytes, 4);
+    conf->domain = UNSET;       /* Default is set in post_config() */
+    randombytes(nut_key, crypto_stream_aes256estream_KEYBYTES);
+    conf->nut_key = nut_key;
+    randombytes(counter_bytes, 4);
     conf->counter = bytes_to_int32(counter_bytes);
     return conf;
 }
