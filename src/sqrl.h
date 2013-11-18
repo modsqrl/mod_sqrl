@@ -34,6 +34,8 @@ limitations under the License.
 #define SQRL_MISSING_SIG 7
 #define SQRL_INVALID_SIG 8
 #define SQRL_INVALID_VER 9
+#define SQRL_EXPIRED_NUT 10
+#define SQRL_MISMATCH_IP 11
 
 #define SQRL_SESSION_ID_BYTES crypto_stream_aes256estream_NONCEBYTES
 #define SQRL_SIGN_BYTES crypto_sign_ed25519_BYTES
@@ -49,7 +51,7 @@ limitations under the License.
 
 typedef struct
 {
-    apr_time_t timestamp;
+    apr_int32_t timestamp;
     apr_int32_t counter;
     unsigned char *nonce;
     unsigned char *ip_hash;

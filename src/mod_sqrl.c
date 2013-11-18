@@ -98,7 +98,8 @@ sqrl_rec *sqrl_create(request_rec * r)
 
     /* Convert the session id to base64 */
     sqrl->session_id =
-        sqrl_base64url_encode(r->pool, session_id_bytes, SQRL_SESSION_ID_BYTES);
+        sqrl_base64url_encode(r->pool, session_id_bytes,
+                              SQRL_SESSION_ID_BYTES);
 
     /* Increment the counter */
     ++sconf->counter;           /* TODO increment_and_get() */
@@ -114,7 +115,7 @@ sqrl_rec *sqrl_create(request_rec * r)
     ip_len = strlen(r->useragent_ip);
     ip_buff = apr_palloc(r->pool, 12 + ip_len);
     /* Add the current time */
-    int32_to_bytes(ip_buff, (apr_int32_t) nut->timestamp);
+    int32_to_bytes(ip_buff, nut->timestamp);
     /* Add the counter */
     int32_to_bytes((ip_buff + 4), nut->counter);
     /* Add a nonce */
@@ -193,7 +194,7 @@ static sqrl_nut_rec *sqrl_nut_parse(apr_pool_t * p, const char *nut)
         return NULL;
     }
 
-    sqrl_nut->timestamp = apr_time_from_sec(bytes_to_int32(nut_bytes));
+    sqrl_nut->timestamp = bytes_to_int32(nut_bytes);
     sqrl_nut->counter = bytes_to_int32(nut_bytes + 4);
     sqrl_nut->nonce = apr_palloc(p, 4);
     memcpy(sqrl_nut->nonce, (nut_bytes + 8), 4);
@@ -330,12 +331,16 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl)
 
 static int authenticate_sqrl(request_rec * r)
 {
-    sqrl_dir_cfg *conf;
+    sqrl_dir_cfg *dconf;
     sqrl_rec *sqrl;
     apr_status_t rv;
-    int verified;
+    int verified, enforce;
+    apr_int32_t time_now;
+    const char *option;
+    apr_size_t ip_len;
+    unsigned char *ip_buff, *ip_hash;
 
-    conf = ap_get_module_config(r->per_dir_config, &sqrl_module);
+    dconf = ap_get_module_config(r->per_dir_config, &sqrl_module);
 
     if (!r->handler || (strcmp(r->handler, "sqrl") != 0)) {
         return DECLINED;
@@ -347,6 +352,7 @@ static int authenticate_sqrl(request_rec * r)
 
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "Verifying SQRL code ...");
 
+    /* Parse out the sqrl data from the request */
     rv = sqrl_parse(r, &sqrl);
     if (rv != APR_SUCCESS) {
         ap_log_rerror(APLOG_MARK, LOG_WARNING, rv, r,
@@ -357,17 +363,60 @@ static int authenticate_sqrl(request_rec * r)
 
     /* Verify the signature */
     verified = sqrl_verify(r->pool, sqrl);
-    if (verified == 0) {
-        ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "SQRL verified");
-        verified = HTTP_OK;
-    }
-    else {
+    if (verified != 0) {
         ap_log_rerror(APLOG_MARK, LOG_WARNING, verified, r,
                       "SQRL failed verification");
-        verified = HTTP_BAD_REQUEST;
+        return HTTP_BAD_REQUEST;
+    }
+    else {
+        ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "SQRL sig verified");
     }
 
-    return verified;
+    /* Verify the time, timeout is 2 minutes */
+    time_now = apr_time_sec(apr_time_now());
+    if (time_now > (sqrl->nut->timestamp + 120)) {
+        ap_log_rerror(APLOG_MARK, LOG_WARNING, SQRL_EXPIRED_NUT, r,
+                      "Nut has expired");
+        return HTTP_BAD_REQUEST;
+    }
+
+    /* Verify the IP address if it is enforced */
+    verified = enforce = 0;
+    if (sqrl->options->nelts > 0) {
+        /* Search for the "enforce" option */
+        do {
+            option = APR_ARRAY_IDX(sqrl->options, verified++, const char *);
+        } while (verified < sqrl->options->nelts
+                 && (enforce = strcmp("enforce", option)) != 0);
+
+        /* If enforce  was found, verify the IP hash */
+        if (enforce == 0) {
+            /* Build a salted IP */
+            ip_len = strlen(r->useragent_ip);
+            ip_buff = apr_palloc(r->pool, 12 + ip_len);
+            /* Add the current time */
+            int32_to_bytes(ip_buff, sqrl->nut->timestamp);
+            /* Add the counter */
+            int32_to_bytes((ip_buff + 4), sqrl->nut->counter);
+            /* Add a nonce */
+            memcpy((ip_buff + 8), sqrl->nut->nonce, 4);
+            /* Add the IP */
+            memcpy((ip_buff + 12), r->useragent_ip, ip_len);
+
+            /* Hash the salted IP and add to the nut struct */
+            ip_hash = apr_palloc(r->pool, crypto_hash_BYTES);
+            crypto_hash(ip_hash, ip_buff, (12 + ip_len));
+
+            /* Compare hash */
+            if (memcmp(sqrl->nut->ip_hash, ip_hash, 4) != 0) {
+                ap_log_rerror(APLOG_MARK, LOG_WARNING, SQRL_MISMATCH_IP, r,
+                              "Request's IP does not match the nut's IP");
+                return HTTP_BAD_REQUEST;
+            }
+        }
+    }
+
+    return HTTP_OK;
 }
 
 static int sign_sqrl(request_rec * r)
