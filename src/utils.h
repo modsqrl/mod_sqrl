@@ -23,6 +23,12 @@ limitations under the License.
 
 
 /*
+ * Get the clients IP address.
+ * @param r Request.
+ */
+char *get_client_ip(request_rec *r);
+
+/*
  * Encode binary data to URL-safe base64.
  * http://tools.ietf.org/html/rfc4648
  * @param p Memory pool to allocate the returned encoded string.

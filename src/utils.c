@@ -25,6 +25,14 @@ limitations under the License.
 #include "utils.h"
 
 
+char *get_client_ip(request_rec *r) {
+#if AP_MODULE_MAGIC_AT_LEAST(20080403,1)
+    return r->useragent_ip;
+#else
+    return r->connection->remote_ip;
+#endif
+}
+
 char *sqrl_base64url_encode(apr_pool_t * p, const unsigned char *plain,
                             unsigned int plain_len)
 {

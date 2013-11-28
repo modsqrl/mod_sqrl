@@ -30,6 +30,7 @@ limitations under the License.
 #include "mod_include.h"
 #include "apreq2/apreq_module_apache2.h"
 #include "apreq2/apreq_module.h"
+#include "apreq2/apreq_util.h"
 
 #include "sodium/core.h"
 #include "sodium/crypto_hash.h"
@@ -116,7 +117,7 @@ sqrl_rec *sqrl_create(request_rec * r)
     randombytes(nut->nonce, 4);
 
     /* Build a salted IP */
-    ip_len = strlen(r->useragent_ip);
+    ip_len = strlen(get_client_ip(r));
     ip_buff = apr_palloc(r->pool, 12 + ip_len);
     /* Add the current time */
     int32_to_bytes(ip_buff, nut->timestamp);
@@ -125,7 +126,7 @@ sqrl_rec *sqrl_create(request_rec * r)
     /* Add a nonce */
     memcpy((ip_buff + 8), nut->nonce, 4);
     /* Add the IP */
-    memcpy((ip_buff + 12), r->useragent_ip, ip_len);
+    memcpy((ip_buff + 12), get_client_ip(r), ip_len);
 
     /* Hash the salted IP and add to the nut struct */
     nut->ip_hash = apr_palloc(r->pool, crypto_hash_BYTES);
@@ -225,12 +226,14 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl)
     sqrl_rec *sq = apr_palloc(r->pool, sizeof(sqrl_rec));
     sqrl_svr_cfg *sconf;
     apreq_handle_t *apreq;
-    const apr_table_t *params;
-    char *last;
+    const apr_table_t *body;
+    apr_table_t *client_params, *server_params;
+    char *clientarg, *serverurl, *last;
     const char *nut64, *key64, *sig64, *version, *options;
     unsigned char *session_id, *nut_bytes, *nut_crypt;
     int session_id_len, nut_len;
     apr_status_t rv;
+    apr_ssize_t ssize;
 
     /* Load the server config for domain properties */
     sconf = ap_get_module_config(r->server->module_config, &sqrl_module);
@@ -238,18 +241,53 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl)
     /* Initiate libapreq */
     apreq = apreq_handle_apache2(r);
 
-    /* Parse the parameters from the query string */
-    rv = apreq_args(apreq, &params);
+    /* Parse the body parameters */
+    rv = apreq_body(apreq, &body);
     if (rv != APR_SUCCESS) {
         return rv;
     }
 
-    /* Build the URL */
-    sq->url = apr_pstrcat(r->pool, sconf->scheme, "://", sconf->domain,
-                          r->unparsed_uri, NULL);
+    /* Decode client args */
+    if(apr_table_get(body, "clientarg") == NULL) {
+        return SQRL_MISSING_CLIENTARG;
+    }
+    clientarg = apr_pstrdup(r->pool, apr_table_get(body, "clientarg"));
+    ssize = apreq_unescape(clientarg);
+    if(ssize < 0) {
+        return SQRL_INVALID_CLIENTARG;
+    }
+
+    /* Parse client parameters */
+    client_params = apr_table_make(r->pool, 3);
+    rv = apreq_parse_query_string(r->pool, client_params, clientarg);
+    if(rv != APR_SUCCESS) {
+        return SQRL_INVALID_CLIENTARG;
+    }
+
+    /* Decode server url */
+    if(apr_table_get(body, "serverurl") == NULL) {
+        return SQRL_MISSING_SERVERURL;
+    }
+    serverurl = apr_pstrdup(r->pool, apr_table_get(body, "serverurl"));
+    ssize = apreq_unescape(serverurl);
+    if(ssize < 0) {
+        return SQRL_INVALID_SERVERURL;
+    }
+    sq->url = serverurl;
+
+    /* Parse server parameters */
+    serverurl = strchr(serverurl, '?');
+    if(serverurl == NULL || *(++serverurl) == '\0') {
+        return SQRL_INVALID_SERVERURL;
+    }
+    server_params = apr_table_make(r->pool, 2);
+    rv = apreq_parse_query_string(r->pool, server_params, serverurl);
+    if(rv != APR_SUCCESS) {
+        return SQRL_INVALID_SERVERURL;
+    }
 
     /* Get the session id */
-    sq->session_id = apr_table_get(params, "sid");
+    sq->session_id = apr_table_get(server_params, "sid");
     if (!sq->session_id) {
         return SQRL_MISSING_SID;
     }
@@ -261,7 +299,7 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl)
     }
 
     /* Get the nut */
-    nut64 = apr_table_get(params, "nut");
+    nut64 = apr_table_get(server_params, "nut");
     if (!nut64) {
         return SQRL_MISSING_NUT;
     }
@@ -284,7 +322,7 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl)
     }
 
     /* Get the public key */
-    key64 = apr_table_get(params, "sqrlkey");
+    key64 = apr_table_get(client_params, "usrkey");
     if (!key64) {
         return SQRL_MISSING_KEY;
     }
@@ -295,7 +333,7 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl)
     }
 
     /* Get the version */
-    version = apr_table_get(params, "sqrlver");
+    version = apr_table_get(client_params, "ver");
     if (version) {
         sq->version = (float) strtod(version, &last);
         if (*last != '\0') {
@@ -307,7 +345,7 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl)
     }
 
     /* Get options */
-    options = apr_table_get(params, "sqrlopt");
+    options = apr_table_get(client_params, "opt");
     if (options) {
         sq->options = sqrl_options_parse(r->pool, options);
     }
@@ -315,14 +353,8 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl)
         sq->options = apr_array_make(r->pool, 0, sizeof(char *));
     }
 
-    /* Parse the parameters from the request body */
-    rv = apreq_body(apreq, &params);
-    if (rv != APR_SUCCESS) {
-        return rv;
-    }
-
     /* Get the signature */
-    sig64 = apr_table_get(params, "sqrlsig");
+    sig64 = apr_table_get(body, "usrkeysig");
     if (!sig64) {
         return SQRL_MISSING_SIG;
     }
@@ -406,7 +438,7 @@ static int authenticate_sqrl(request_rec * r)
         /* If enforce  was found, verify the IP hash */
         if (enforce == 0) {
             /* Build a salted IP */
-            ip_len = strlen(r->useragent_ip);
+            ip_len = strlen(get_client_ip(r));
             ip_buff = apr_palloc(r->pool, 12 + ip_len);
             /* Add the current time */
             int32_to_bytes(ip_buff, sqrl->nut->timestamp);
@@ -415,7 +447,7 @@ static int authenticate_sqrl(request_rec * r)
             /* Add a nonce */
             memcpy((ip_buff + 8), sqrl->nut->nonce, 4);
             /* Add the IP */
-            memcpy((ip_buff + 12), r->useragent_ip, ip_len);
+            memcpy((ip_buff + 12), get_client_ip(r), ip_len);
 
             /* Hash the salted IP and add to the nut struct */
             ip_hash = apr_palloc(r->pool, crypto_hash_BYTES);
@@ -583,7 +615,7 @@ static APR_OPTIONAL_FN_TYPE(ap_ssi_get_tag_and_value) *
         }
         /* Unknown argument */
         else {
-            ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, APLOGNO(01366)
+            ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
                           "Invalid tag for 'sqrl_gen' directive in %s",
                           r->filename);
             SSI_CREATE_ERROR_BUCKET(ctx, f, bb);
