@@ -83,6 +83,7 @@ sqrl_rec *sqrl_create(request_rec * r)
     /* Load the directory config to get the URL properties */
     dconf = ap_get_module_config(r->per_dir_config, &sqrl_module);
     additional = dconf->additional;
+    additional = "/sqrl"; /* TODO delete */
     path = dconf->path;
 
     /* Log config */
