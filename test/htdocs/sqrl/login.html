@@ -9,8 +9,8 @@
 			padding-top: 2em;
 		}
 		form {
-			float: left;
 			width: 49%;
+			margin: 0 auto;
 		}
 		#message_box {
 			display: inline-block;
@@ -21,8 +21,8 @@
 			background-color: lightgoldenrodyellow;
 			padding: 0 5px;
 		}
-		#sqrl_form {
-			margin-left: 2%;
+		#log {
+			white-space: nowrap;
 		}
 	</style>
 	<script src="nacl_factory.js"></script>
@@ -53,7 +53,7 @@
 			}));
 		}
 
-		function authenticate(sqrlurl, sqrlsig) {
+		function authenticate(sqrlurl, sqrlkey, sqrlsig, log) {
 			message("Authenticating you");
 			// Swap the sqrl scheme for https
 			var url = sqrlurl.substring(0, 4);
@@ -65,22 +65,75 @@
 				console.error("Invalid URL. Must start with 'sqr://' or 'sqrl://'");
 				return;
 			}
+			url = url.replace(/[|]/, "/");
+			log.authUrl = url;
+
+			var clientarg = "ver=1&opt=enforce&usrkey=" + sqrlkey;
+			log.args = clientarg;
+			clientarg = encodeURIComponent(clientarg);
+
+			var post = "clientarg=" + clientarg + "&" +
+								"serverurl=" + encodeURIComponent(sqrlurl) + "&" +
+								"usrkeysig=" + sqrlsig;
+			log.post = post;
 
 			var xhr = new XMLHttpRequest();
 			xhr.onreadystatechange = function() {
 				if(xhr.readyState == 4) {
-					if(xhr.status != 200) {
+					if(xhr.status == 200) {
+						message("Authenticated");
+					} else {
 						console.error(xhr.status + ": " + xhr.statusText);
 						message(xhr.status + ": " + xhr.statusText);
-						return;
 					}
-					message("Authenticated");
-					document.getElementById("sqrl_form").submit();
+
+					function appendDef(list, term, def) {
+						list.appendChild(document.createElement("dt")).
+								appendChild(document.createTextNode(term));
+						list.appendChild(document.createElement("dd")).
+								appendChild(document.createTextNode(def));
+					}
+
+					var dl = document.createElement("dl");
+					appendDef(dl, "url", log.url);
+					appendDef(dl, "scheme", log.parsedUrl.scheme);
+					appendDef(dl, "domain", log.parsedUrl.domain);
+					appendDef(dl, "path", log.parsedUrl.path);
+					appendDef(dl, "args", log.parsedUrl.args);
+					appendDef(dl, "hasMaster", log.hasMaster);
+					appendDef(dl, "master", log.master);
+					appendDef(dl, "private", log.private);
+					appendDef(dl, "public", log.public);
+					appendDef(dl, "sig", log.sig);
+					appendDef(dl, "authUrl", log.authUrl);
+					appendDef(dl, "args", log.args);
+					appendDef(dl, "post", log.post);
+					document.getElementById("log").appendChild(dl);
 				}
 			};
 			xhr.open("POST", url, true);
 			xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
-			xhr.send("sqrlsig=" + sqrlsig);
+			xhr.send(post);
+		}
+
+		function parseUrl(url) {
+			var u = {};
+			var divider = url.indexOf("://");
+			u.scheme = url.substring(0, divider);
+			divider = divider + 3;
+			var pipe = url.indexOf("|", divider);
+			if(pipe > 0) {
+				u.domain = url.substring(divider, pipe);
+			} else {
+				pipe = url.indexOf("/", divider);
+				u.domain = url.substring(divider, pipe);
+			}
+			++pipe;
+			divider = url.indexOf("?", pipe);
+			u.path = url.substring(pipe, divider);
+			++divider;
+			u.args = url.substring(divider);
+			return u;
 		}
 
 		/**
@@ -88,8 +141,14 @@
 		 */
 		function signUrl(url) {
 			message("Signing the URL");
+			var log = {};
 			var nacl = nacl_factory.instantiate();
-			var keyPair, sig, master64, public64, sig64;
+			var parsedUrl, privat, keyPair, sig, master64, public64, sig64;
+
+			log.url = url;
+			parsedUrl = parseUrl(url);
+			log.parsedUrl = parsedUrl;
+
 			master64 = localStorage.getItem("pk");
 			if(!master64) {
 				var master = new Uint8Array(32);
@@ -98,17 +157,31 @@
 				}
 				master64 = toAscii(master);
 				localStorage.setItem("pk", master64);
+
+				log.hasMaster = false;
+				log.master = master64;
+			} else {
+				log.hasMaster = true;
+				log.master = master64;
 			}
-			keyPair = nacl.crypto_sign_keypair_from_seed(fromAscii(master64));
+
+			privat = nacl.crypto_auth(nacl.encode_utf8(parsedUrl.domain),
+					fromAscii(master64));
+
+			keyPair = nacl.crypto_sign_keypair_from_seed(privat);
 			public64 = toAscii(keyPair.signPk);
 			public64 = public64.replace(/[+]/g, "-").replace(/[/]/g, "_").
 					replace(/[=]/g, "");
-			url = url.replace(/[|]/, "/") + "&sqrlver=1&sqrlopt=enforce&sqrlkey=" +
-					public64;
 			sig = nacl.crypto_sign(nacl.encode_utf8(url), keyPair.signSk).subarray(0, 64);
 			sig64 = toAscii(sig).replace(/[+]/g, "-").replace(/[/]/g, "_").
 					replace(/[=]/g, "");
-			authenticate(url, sig64);
+
+			log.private = toAscii(privat).replace(/[+]/g, "-").
+					replace(/[/]/g, "_").replace(/[=]/g, "");
+			log.public = public64;
+			log.sig = sig64;
+
+			authenticate(url, public64, sig64, log);
 		}
 
 		window.addEventListener("load", function() {
@@ -124,24 +197,6 @@
 
 <div id="message_box"></div>
 
-<form id="std_form" action="do_login" method="POST">
-
-	<label for="httpd_username">Username:</label>
-	<input id="httpd_username" name="httpd_username" type="text" value="test"/>
-	<br/>
-
-	<label for="httpd_password">Password:</label>
-	<input id="httpd_password" name="httpd_password" type="password" value="test"/>
-	<br/>
-
-	<input type="hidden" name="httpd_location" value="/login_success.html" />
-
-	<button type="submit">Login</button>
-
-</form>
-
-<div id="form_sep"></div>
-
 <form id="sqrl_form" action="do_login" method="POST">
 	<!--#sqrl_gen url="sqrl_url" session_id="sqrl_sid" -->
 
@@ -152,9 +207,9 @@
 	<input type="hidden" name="httpd_password" value="sqrl"/>
 	<input type="hidden" name="httpd_location" value="/login_success.html" />
 
-	<!--<button type="submit">Login</button>-->
-
 </form>
+
+<div id="log"></div>
 
 </body>
 </html>
