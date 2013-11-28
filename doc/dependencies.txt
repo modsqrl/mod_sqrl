@@ -1,16 +1,31 @@
 
+apr
+./configure --prefix=/usr/local --enable-nonportable-atomics --enable-threads --enable-other-child CFLAGS="-O2 -mtune=native"
+make
+sudo make install
+
+apr-iconv
+./configure --prefix=/usr/local --with-apr=/usr/local CFLAGS="-O2 -mtune=native"
+make
+sudo make install
+
+apr-util
+./configure --prefix=/usr/local --with-apr=/usr/local --with-crypto --with-openssl=/usr CFLAGS="-O2 -mtune=native"
+make
+sudo make install
+
 httpd 2.4
 --prefix=/usr/local/apache24 --enable-logio=shared --enable-ssl=shared --enable-dbd=shared --enable-authn-dbd=shared --enable-headers=shared --enable-info=shared --enable-session=shared --enable-session-cookie=shared --enable-session-crypto=shared --with-crypto --with-mpm=worker --with-included-apr CFLAGS="-O2 -mtune=native"
 make
 sudo make install
 
 libsodium
-./configure --prefix=/usr/local --enable-shared --enable-static CFLAGS="-O2 -mtune=native"
+./configure --prefix=/usr/local CFLAGS="-O2 -mtune=native"
 make
 sudo make install
 
 libapreq
-./configure --prefix=/usr/local/apache24 --with-apache2-apxs=/usr/local/apache24/bin/apxs CFLAGS="-O2 -mtune=native"
+./configure --with-apache2-apxs=/usr/local/apache24/bin/apxs CFLAGS="-O2 -mtune=native"
 make
 sudo make install
 
