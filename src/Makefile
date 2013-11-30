@@ -9,7 +9,7 @@ APXS=$(top_srcdir)/bin/apxs
 APACHECTL=$(top_srcdir)/bin/apachectl
 
 #   additional defines, includes and libraries
-MOD_CFLAGS=-Wall -g -O0
+MOD_CFLAGS=-Wall -g -O0 -std=c99 -pedantic
 MOD_LDFLAGS=-lsodium -lapreq2
 
 #   the default target

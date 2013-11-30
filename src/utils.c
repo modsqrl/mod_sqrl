@@ -25,7 +25,8 @@ limitations under the License.
 #include "utils.h"
 
 
-char *get_client_ip(request_rec *r) {
+char *get_client_ip(request_rec * r)
+{
 #if AP_MODULE_MAGIC_AT_LEAST(20080403,1)
     return r->useragent_ip;
 #else

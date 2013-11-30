@@ -84,7 +84,6 @@ sqrl_rec *sqrl_create(request_rec * r)
     /* Load the directory config to get the URL properties */
     dconf = ap_get_module_config(r->per_dir_config, &sqrl_module);
     additional = dconf->additional;
-    additional = "/sqrl"; /* TODO delete */
     path = dconf->path;
 
     /* Log config */
@@ -92,6 +91,9 @@ sqrl_rec *sqrl_create(request_rec * r)
                   "scheme = %s, domain = %s, additional = %s, path = %s",
                   scheme, domain, (additional == NULL ? "null" : additional),
                   path);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "nut_key = %s",
+                  bin2hex(r->pool, sconf->nut_key, SQRL_ENCRYPTION_KEY_BYTES,
+                          NULL));
 
     /* Allocate the sqrl struct */
     sqrl = apr_palloc(r->pool, sizeof(sqrl_rec));
@@ -248,41 +250,41 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl)
     }
 
     /* Decode client args */
-    if(apr_table_get(body, "clientarg") == NULL) {
+    if (apr_table_get(body, "clientarg") == NULL) {
         return SQRL_MISSING_CLIENTARG;
     }
     clientarg = apr_pstrdup(r->pool, apr_table_get(body, "clientarg"));
     ssize = apreq_unescape(clientarg);
-    if(ssize < 0) {
+    if (ssize < 0) {
         return SQRL_INVALID_CLIENTARG;
     }
 
     /* Parse client parameters */
     client_params = apr_table_make(r->pool, 3);
     rv = apreq_parse_query_string(r->pool, client_params, clientarg);
-    if(rv != APR_SUCCESS) {
+    if (rv != APR_SUCCESS) {
         return SQRL_INVALID_CLIENTARG;
     }
 
     /* Decode server url */
-    if(apr_table_get(body, "serverurl") == NULL) {
+    if (apr_table_get(body, "serverurl") == NULL) {
         return SQRL_MISSING_SERVERURL;
     }
     serverurl = apr_pstrdup(r->pool, apr_table_get(body, "serverurl"));
     ssize = apreq_unescape(serverurl);
-    if(ssize < 0) {
+    if (ssize < 0) {
         return SQRL_INVALID_SERVERURL;
     }
     sq->url = serverurl;
 
     /* Parse server parameters */
     serverurl = strchr(serverurl, '?');
-    if(serverurl == NULL || *(++serverurl) == '\0') {
+    if (serverurl == NULL || *(++serverurl) == '\0') {
         return SQRL_INVALID_SERVERURL;
     }
     server_params = apr_table_make(r->pool, 2);
     rv = apreq_parse_query_string(r->pool, server_params, serverurl);
-    if(rv != APR_SUCCESS) {
+    if (rv != APR_SUCCESS) {
         return SQRL_INVALID_SERVERURL;
     }
 
@@ -651,14 +653,22 @@ static int sqrl_post_config(apr_pool_t * p, apr_pool_t * plog,
                             apr_pool_t * ptemp, server_rec * s)
 {
     sqrl_svr_cfg *sconf;
+    unsigned char *nut_key;
     int rv;
 
-    /* Load the server config to validate the domain */
+    /* Load the server config to validate settings */
     sconf = ap_get_module_config(s->module_config, &sqrl_module);
 
     /* If a domain isn't configured, set it to this server's domain */
     if (sconf->domain == UNSET) {
         sconf->domain = s->server_hostname;
+    }
+
+    /* If a nut_key isn't configured, generate a random one */
+    if (sconf->nut_key == (unsigned char *) UNSET) {
+        nut_key = apr_palloc(p, SQRL_ENCRYPTION_KEY_BYTES);
+        randombytes(nut_key, SQRL_ENCRYPTION_KEY_BYTES);
+        sconf->nut_key = nut_key;
     }
 
     /* Retrieve mod_include's optional functions */
@@ -690,13 +700,10 @@ static void *create_server_config(apr_pool_t * p, server_rec * s)
 {
     sqrl_svr_cfg *conf = apr_palloc(p, sizeof(sqrl_svr_cfg));
     unsigned char *counter_bytes = apr_palloc(p, 4);
-    unsigned char *nut_key = apr_palloc(p,
-                                        crypto_stream_aes256estream_KEYBYTES);
 
     conf->scheme = "qrl";
     conf->domain = UNSET;       /* Default is set in post_config() */
-    randombytes(nut_key, crypto_stream_aes256estream_KEYBYTES);
-    conf->nut_key = nut_key;
+    conf->nut_key = (unsigned char *) UNSET;    /* Default is set in post_config() */
     randombytes(counter_bytes, 4);
     conf->counter = bytes_to_int32(counter_bytes);
     return conf;
@@ -705,11 +712,110 @@ static void *create_server_config(apr_pool_t * p, server_rec * s)
 static void *create_dir_config(apr_pool_t * p, char *dir)
 {
     sqrl_dir_cfg *conf = apr_palloc(p, sizeof(sqrl_dir_cfg));
-    conf->additional = UNSET, conf->path = "sqrl";
+    conf->additional = UNSET;
+    conf->path = "sqrl";
     return conf;
 }
 
+static const char *cfg_set_tls(cmd_parms * parms, void *mconfig, int on)
+{
+    server_rec *s = parms->server;
+    sqrl_svr_cfg *conf = ap_get_module_config(s->module_config, &sqrl_module);
+    conf->scheme = (on ? "sqrl" : "qrl");
+    return NULL;
+}
+
+static const char *cfg_set_domain(cmd_parms * parms, void *mconfig,
+                                  const char *w)
+{
+    server_rec *s = parms->server;
+    sqrl_svr_cfg *conf = ap_get_module_config(s->module_config, &sqrl_module);
+    conf->domain = w;
+    return NULL;
+}
+
+#define AssertHex(c, pool) \
+if (c < '0' || (c > '9' && c < 'A') || (c > 'F' && c < 'a') || c > 'f') { \
+    return apr_pstrcat(pool, "Invalid hex character: ", \
+                       apr_pstrndup(pool, w, 1U), NULL); \
+}
+
+static const char *cfg_set_key(cmd_parms * parms, void *mconfig,
+                               const char *w)
+{
+    server_rec *s = parms->server;
+    sqrl_svr_cfg *conf = ap_get_module_config(s->module_config, &sqrl_module);
+    unsigned char *nut_key =
+        apr_palloc(parms->pool, SQRL_ENCRYPTION_KEY_BYTES);
+    char hex[70];
+    char *c;
+    unsigned short i;
+
+    /* Setup hex table */
+    for (i = 0, c = &hex['0']; i < 10; ++i, ++c) {
+        *c = i;
+    }
+    for (i = 10, c = &hex['A']; i < 16; ++i, ++c) {
+        *c = i;
+    }
+    for (i = 10, c = &hex['a']; i < 16; ++i, ++c) {
+        *c = i;
+    }
+
+    /* Convert two hex characters to one byte */
+    for (i = 0;
+         i < SQRL_ENCRYPTION_KEY_BYTES && *w != '\0' && *(w + 1) != '\0';
+         ++i, ++w) {
+        AssertHex(*w, parms->pool);
+        nut_key[i] = (hex[(int) *w] << 4);
+        ++w;
+        AssertHex(*w, parms->pool);
+        nut_key[i] |= (hex[(int) *w]);
+    }
+
+    /* Verify the size is correct */
+    if (i != SQRL_ENCRYPTION_KEY_BYTES || *w != '\0') {
+        return apr_pstrcat(parms->pool, "Encryption key must be ",
+                           apr_itoa(parms->pool, SQRL_ENCRYPTION_KEY_BYTES),
+                           " bytes", NULL);
+    }
+
+    /* Set the nut_key */
+    conf->nut_key = nut_key;
+
+    return NULL;
+}
+
+static const char *cfg_set_additional(cmd_parms * parms, void *mconfig,
+                                      const char *w)
+{
+    sqrl_dir_cfg *conf = (sqrl_dir_cfg *) mconfig;
+    conf->additional =
+        (*w == '/' ? w : apr_pstrcat(parms->pool, "/", w, NULL));
+    return NULL;
+}
+
+static const char *cfg_set_path(cmd_parms * parms, void *mconfig,
+                                const char *w)
+{
+    sqrl_dir_cfg *conf = (sqrl_dir_cfg *) mconfig;
+    conf->path = (*w == '/' ? (w + 1) : w);
+    return NULL;
+}
+
 static const command_rec configuration_cmds[] = {
+    AP_INIT_FLAG("SqrlTls", cfg_set_tls, NULL, RSRC_CONF,
+                 "Create secure Authentication-URLs to authenticate over TLS"),
+    AP_INIT_TAKE1("SqrlDomain", cfg_set_domain, NULL, RSRC_CONF,
+                  "Authenticate to this domain"),
+    AP_INIT_TAKE1("SqrlEncryptionKey", cfg_set_key, NULL, RSRC_CONF,
+                  "16-byte encryption key for encrypting the nut"),
+    AP_INIT_TAKE1("SqrlDomainAddition", cfg_set_additional, NULL,
+                  ACCESS_CONF | RSRC_CONF,
+                  "Path to include as part of the domain in the "
+                  "Authentication-URL"),
+    AP_INIT_TAKE1("SqrlPath", cfg_set_path, NULL, ACCESS_CONF | RSRC_CONF,
+                  "Path to authentication service"),
     {NULL}
 };
 

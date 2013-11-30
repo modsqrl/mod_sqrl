@@ -26,7 +26,7 @@ limitations under the License.
  * Get the clients IP address.
  * @param r Request.
  */
-char *get_client_ip(request_rec *r);
+char *get_client_ip(request_rec * r);
 
 /*
  * Encode binary data to URL-safe base64.
