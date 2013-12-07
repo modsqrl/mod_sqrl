@@ -66,6 +66,7 @@ typedef struct
 {
     const char *url;
     const sqrl_nut_rec *nut;
+    const char *nut64;
     const char *nonce;
     float version;
     const apr_array_header_t *options;

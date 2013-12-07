@@ -74,7 +74,6 @@ sqrl_rec *sqrl_create(request_rec * r)
     unsigned char *ip_buff;
     unsigned char *nut_buff;
     unsigned char *nut_crypt;
-    char *nut64;
 
     /* Load the server config to get the counter */
     sconf = ap_get_module_config(r->server->module_config, &sqrl_module);
@@ -105,8 +104,7 @@ sqrl_rec *sqrl_create(request_rec * r)
 
     /* Convert the nonce to base64 */
     sqrl->nonce =
-        sqrl_base64url_encode(r->pool, nonce_bytes,
-                              SQRL_NONCE_BYTES);
+        sqrl_base64url_encode(r->pool, nonce_bytes, SQRL_NONCE_BYTES);
 
     /* Increment the counter */
     ++sconf->counter;           /* TODO increment_and_get() */
@@ -148,18 +146,18 @@ sqrl_rec *sqrl_create(request_rec * r)
                                     nonce_bytes, sconf->nut_key);
 
     /* Encode the nut as base64 */
-    nut64 = sqrl_base64url_encode(r->pool, nut_crypt, 16);
+    sqrl->nut64 = sqrl_base64url_encode(r->pool, nut_crypt, 16);
 
     /* Generate the url */
     if (additional && strlen(additional) > 1) {
         sqrl->url =
             apr_pstrcat(r->pool, scheme, "://", domain, additional, "|", path,
-                        "?nut=", nut64, "&n=", sqrl->nonce, NULL);
+                        "?nut=", sqrl->nut64, "&n=", sqrl->nonce, NULL);
     }
     else {
         sqrl->url =
             apr_pstrcat(r->pool, scheme, "://", domain, "/", path, "?nut=",
-                        nut64, "&n=", sqrl->nonce, NULL);
+                        sqrl->nut64, "&n=", sqrl->nonce, NULL);
     }
 
     /* Initialize the remaining fields */
@@ -230,7 +228,7 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl)
     const apr_table_t *body;
     apr_table_t *client_params, *server_params;
     char *clientarg, *serverurl, *last;
-    const char *nut64, *key64, *sig64, *version, *options;
+    const char *key64, *sig64, *version, *options;
     unsigned char *nonce, *nut_bytes, *nut_crypt;
     int nonce_len, nut_len;
     apr_status_t rv;
@@ -293,19 +291,18 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl)
         return SQRL_MISSING_SID;
     }
     /* Decode the nonce */
-    nonce =
-        sqrl_base64url_decode(r->pool, sq->nonce, &nonce_len);
+    nonce = sqrl_base64url_decode(r->pool, sq->nonce, &nonce_len);
     if (nonce_len != SQRL_NONCE_BYTES) {
         return SQRL_INVALID_SID;
     }
 
     /* Get the nut */
-    nut64 = apr_table_get(server_params, "nut");
-    if (!nut64) {
+    sq->nut64 = apr_table_get(server_params, "nut");
+    if (!sq->nut64) {
         return SQRL_MISSING_NUT;
     }
     /* Decode the nut */
-    nut_bytes = sqrl_base64url_decode(r->pool, nut64, &nut_len);
+    nut_bytes = sqrl_base64url_decode(r->pool, sq->nut64, &nut_len);
     if (nut_len != 16) {
         return SQRL_INVALID_NUT;
     }
@@ -634,7 +631,7 @@ static APR_OPTIONAL_FN_TYPE(ap_ssi_get_tag_and_value) *
             apr_table_set(r->subprocess_env, url, sqrl->url);
         }
         if (session_id) {
-            apr_table_set(r->subprocess_env, session_id, sqrl->nonce);
+            apr_table_set(r->subprocess_env, session_id, sqrl->nut64);
         }
     }
 
