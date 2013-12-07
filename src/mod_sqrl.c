@@ -429,11 +429,13 @@ static int authenticate_sqrl(request_rec * r)
         /* Search for the "enforce" option */
         do {
             option = APR_ARRAY_IDX(sqrl->options, verified++, const char *);
-        } while (verified < sqrl->options->nelts
-                 && (enforce = strcmp("enforce", option)) != 0);
+            if(strcmp("enforce", option) == 0) {
+                enforce = 1;
+            }
+        } while (verified < sqrl->options->nelts);
 
         /* If enforce  was found, verify the IP hash */
-        if (enforce == 0) {
+        if (enforce) {
             /* Build a salted IP */
             ip_len = strlen(get_client_ip(r));
             ip_buff = apr_palloc(r->pool, 12 + ip_len);
