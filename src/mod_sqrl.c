@@ -69,7 +69,7 @@ sqrl_rec *sqrl_create(request_rec * r)
     sqrl_dir_cfg *dconf;
     const char *scheme, *domain, *additional, *path;
     sqrl_nut_rec *nut;
-    unsigned char *session_id_bytes;
+    unsigned char *nonce_bytes;
     apr_size_t ip_len;
     unsigned char *ip_buff;
     unsigned char *nut_buff;
@@ -98,15 +98,15 @@ sqrl_rec *sqrl_create(request_rec * r)
     /* Allocate the sqrl struct */
     sqrl = apr_palloc(r->pool, sizeof(sqrl_rec));
 
-    /* Generate a session id */
-    session_id_bytes = apr_palloc(r->pool, SQRL_SESSION_ID_BYTES);
+    /* Generate a nonce */
+    nonce_bytes = apr_palloc(r->pool, SQRL_NONCE_BYTES);
     /* libsodium PRNG */
-    randombytes(session_id_bytes, SQRL_SESSION_ID_BYTES);
+    randombytes(nonce_bytes, SQRL_NONCE_BYTES);
 
-    /* Convert the session id to base64 */
-    sqrl->session_id =
-        sqrl_base64url_encode(r->pool, session_id_bytes,
-                              SQRL_SESSION_ID_BYTES);
+    /* Convert the nonce to base64 */
+    sqrl->nonce =
+        sqrl_base64url_encode(r->pool, nonce_bytes,
+                              SQRL_NONCE_BYTES);
 
     /* Increment the counter */
     ++sconf->counter;           /* TODO increment_and_get() */
@@ -145,8 +145,7 @@ sqrl_rec *sqrl_create(request_rec * r)
     /* Encrypt the nut */
     nut_crypt = apr_palloc(r->pool, 16);
     crypto_stream_aes256estream_xor(nut_crypt, nut_buff, 16U,
-                                    (unsigned char *) sqrl->session_id,
-                                    sconf->nut_key);
+                                    nonce_bytes, sconf->nut_key);
 
     /* Encode the nut as base64 */
     nut64 = sqrl_base64url_encode(r->pool, nut_crypt, 16);
@@ -155,12 +154,12 @@ sqrl_rec *sqrl_create(request_rec * r)
     if (additional && strlen(additional) > 1) {
         sqrl->url =
             apr_pstrcat(r->pool, scheme, "://", domain, additional, "|", path,
-                        "?nut=", nut64, "&sid=", sqrl->session_id, NULL);
+                        "?nut=", nut64, "&n=", sqrl->nonce, NULL);
     }
     else {
         sqrl->url =
             apr_pstrcat(r->pool, scheme, "://", domain, "/", path, "?nut=",
-                        nut64, "&sid=", sqrl->session_id, NULL);
+                        nut64, "&n=", sqrl->nonce, NULL);
     }
 
     /* Initialize the remaining fields */
@@ -232,8 +231,8 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl)
     apr_table_t *client_params, *server_params;
     char *clientarg, *serverurl, *last;
     const char *nut64, *key64, *sig64, *version, *options;
-    unsigned char *session_id, *nut_bytes, *nut_crypt;
-    int session_id_len, nut_len;
+    unsigned char *nonce, *nut_bytes, *nut_crypt;
+    int nonce_len, nut_len;
     apr_status_t rv;
     apr_ssize_t ssize;
 
@@ -289,14 +288,14 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl)
     }
 
     /* Get the session id */
-    sq->session_id = apr_table_get(server_params, "sid");
-    if (!sq->session_id) {
+    sq->nonce = apr_table_get(server_params, "n");
+    if (!sq->nonce) {
         return SQRL_MISSING_SID;
     }
-    /* Decode the session id */
-    session_id =
-        sqrl_base64url_decode(r->pool, sq->session_id, &session_id_len);
-    if (session_id_len != SQRL_SESSION_ID_BYTES) {
+    /* Decode the nonce */
+    nonce =
+        sqrl_base64url_decode(r->pool, sq->nonce, &nonce_len);
+    if (nonce_len != SQRL_NONCE_BYTES) {
         return SQRL_INVALID_SID;
     }
 
@@ -314,8 +313,7 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl)
     /* Decrypt the nut */
     nut_crypt = apr_palloc(r->pool, 16);
     crypto_stream_aes256estream_xor(nut_crypt, nut_bytes, 16U,
-                                    (unsigned char *) sq->session_id,
-                                    sconf->nut_key);
+                                    nonce, sconf->nut_key);
 
     /* Parse the nut */
     sq->nut = sqrl_nut_parse(r->pool, nut_crypt);
@@ -636,7 +634,7 @@ static APR_OPTIONAL_FN_TYPE(ap_ssi_get_tag_and_value) *
             apr_table_set(r->subprocess_env, url, sqrl->url);
         }
         if (session_id) {
-            apr_table_set(r->subprocess_env, session_id, sqrl->session_id);
+            apr_table_set(r->subprocess_env, session_id, sqrl->nonce);
         }
     }
 

@@ -41,7 +41,7 @@ limitations under the License.
 #define SQRL_EXPIRED_NUT 14
 #define SQRL_MISMATCH_IP 15
 
-#define SQRL_SESSION_ID_BYTES crypto_stream_aes256estream_NONCEBYTES
+#define SQRL_NONCE_BYTES crypto_stream_aes256estream_NONCEBYTES
 #define SQRL_ENCRYPTION_KEY_BYTES crypto_stream_aes256estream_KEYBYTES
 #define SQRL_SIGN_BYTES crypto_sign_ed25519_BYTES
 #define SQRL_PUBLIC_KEY_BYTES crypto_sign_ed25519_PUBLICKEYBYTES
@@ -66,7 +66,7 @@ typedef struct
 {
     const char *url;
     const sqrl_nut_rec *nut;
-    const char *session_id;
+    const char *nonce;
     float version;
     const apr_array_header_t *options;
     int key_len;

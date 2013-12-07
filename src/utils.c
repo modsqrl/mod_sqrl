@@ -179,11 +179,11 @@ const char *sqrl_to_string(apr_pool_t * pool, sqrl_rec * sqrl)
 
     return apr_psprintf(pool,
                         "sqrl_rec{url=%s,sqrl_nut_rec{timestamp=%s,counter=%d,"
-                        "nonce=%s,ip_hash=%s},session_id=%s,version=%f,"
+                        "nonce=%s,ip_hash=%s},nonce=%s,version=%f,"
                         "options=%s,key_len=%d,key=%s,sig_len=%d,sig=%s}",
                         ck_null(sqrl->url), timestamp,
                         (sqrl->nut->counter ? sqrl->nut->counter : 0), nonce,
-                        ip_hash, ck_null(sqrl->session_id),
+                        ip_hash, ck_null(sqrl->nonce),
                         (sqrl->version ? sqrl->version : 0.0),
                         (sqrl->options ?
                          apr_array_pstrcat(pool, sqrl->options,
