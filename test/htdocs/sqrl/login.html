@@ -198,12 +198,12 @@
 <div id="message_box"></div>
 
 <form id="sqrl_form" action="do_login" method="POST">
-	<!--#sqrl_gen url="sqrl_url" session_id="sqrl_sid" -->
+	<!--#sqrl_gen url="sqrl_url" id="sqrl_id" -->
 
 	<a id="sqrl_auth" href="<!--#echo var='sqrl_url' -->"><!--#echo var="sqrl_url" --></a>
 	<br/>
 
-	<input type="hidden" name="httpd_username" value="<!--#echo var='sqrl_sid' -->"/>
+	<input type="hidden" name="httpd_username" value="<!--#echo var='sqrl_id' -->"/>
 	<input type="hidden" name="httpd_password" value="sqrl"/>
 	<input type="hidden" name="httpd_location" value="/login_success.html" />
 

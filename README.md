@@ -35,21 +35,21 @@ Example:
 
 ### mod\_include Directives
 
-| Directive | Attribute   | Description |
-| --------- | ----------- | ----------- |
-| sqrl\_gen |             | Generate a new Authentication-URL |
-|           | url         | Environment variable name to hold the URL. |
-|           | session\_id | Environment variable name to hold the sqrl session id. This is not the user's session id; it only identifies the authentication session. |
+| Directive | Attribute | Description |
+| --------- | --------- | ----------- |
+| sqrl\_gen |           | Generate a new Authentication-URL |
+|           | url       | Environment variable name to hold the URL. |
+|           | id        | Environment variable name to hold the sqrl id. This is not the user's session id; it only identifies the authentication session. |
 
 Example:
 ```HTML
 <form action="/sqrl_continue" method="POST">
-    <!--#sqrl_gen url="sqrl_url" session_id="sqrl_sid" -->
+    <!--#sqrl_gen url="sqrl_url" id="sqrl_id" -->
 
     <a href="<!--#echo var='sqrl_url' -->">Authenticate with SQRL</a>
     <br/>
 
-    <input type="hidden" name="sid" value="<!--#echo var='sqrl_sid' -->"/>
+    <input type="hidden" name="sid" value="<!--#echo var='sqrl_id' -->"/>
     <button type="submit">Continue</button>
 
 </form>

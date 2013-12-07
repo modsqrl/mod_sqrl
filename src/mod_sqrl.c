@@ -574,9 +574,9 @@ static APR_OPTIONAL_FN_TYPE(ap_ssi_get_tag_and_value) *
 /**
  * Generate a SQRL URL and add to the SSI environment.
  * Example:
- * <!--#sqrl_gen url="sqrl_url" session_id="sqrl_id" -->
+ * <!--#sqrl_gen url="sqrl_url" id="sqrl_id" -->
  * URL = <!--#echo var="sqrl_url" -->
- * Session ID = <!--#echo var="sqrl_id" -->
+ * ID = <!--#echo var="sqrl_id" -->
  */
      static apr_status_t handle_sqrl_gen(include_ctx_t * ctx, ap_filter_t * f,
                                          apr_bucket_brigade * bb)
@@ -585,7 +585,7 @@ static APR_OPTIONAL_FN_TYPE(ap_ssi_get_tag_and_value) *
     request_rec *mr = r->main;
     apr_pool_t *p = r->pool;
     char *tag = NULL, *tag_val = NULL;
-    char *url = NULL, *session_id = NULL;
+    char *url = NULL, *id = NULL;
     sqrl_rec *sqrl;
 
     /* Need the main request's pool */
@@ -607,8 +607,8 @@ static APR_OPTIONAL_FN_TYPE(ap_ssi_get_tag_and_value) *
             url = tag_val;
         }
         /* Check and set the sqrl session id */
-        else if (!strcmp(tag, "session_id")) {
-            session_id = tag_val;
+        else if (!strcmp(tag, "id")) {
+            id = tag_val;
         }
         /* Unknown argument */
         else {
@@ -621,7 +621,7 @@ static APR_OPTIONAL_FN_TYPE(ap_ssi_get_tag_and_value) *
     }
 
     /* Only generate a sqrl if it's actually going to be used */
-    if (url || session_id) {
+    if (url || id) {
         sqrl = sqrl_create(r);
         if (!sqrl) {
             SSI_CREATE_ERROR_BUCKET(ctx, f, bb);
@@ -630,8 +630,8 @@ static APR_OPTIONAL_FN_TYPE(ap_ssi_get_tag_and_value) *
         if (url) {
             apr_table_set(r->subprocess_env, url, sqrl->url);
         }
-        if (session_id) {
-            apr_table_set(r->subprocess_env, session_id, sqrl->nut64);
+        if (id) {
+            apr_table_set(r->subprocess_env, id, sqrl->nut64);
         }
     }
 
