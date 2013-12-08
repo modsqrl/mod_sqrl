@@ -150,43 +150,49 @@ sqrl_rec *sqrl_create(request_rec * r)
 
     /* Generate the url */
     if (additional && strlen(additional) > 1) {
-        sqrl->url =
+        sqrl->uri =
             apr_pstrcat(r->pool, scheme, "://", domain, additional, "|", path,
                         "?nut=", sqrl->nut64, "&n=", sqrl->nonce, NULL);
     }
     else {
-        sqrl->url =
+        sqrl->uri =
             apr_pstrcat(r->pool, scheme, "://", domain, "/", path, "?nut=",
                         sqrl->nut64, "&n=", sqrl->nonce, NULL);
     }
 
     /* Initialize the remaining fields */
-    sqrl->version = 0.0;
-    sqrl->options = NULL;
-    sqrl->key_len = 0;
-    sqrl->key = NULL;
-    sqrl->sig_len = 0;
-    sqrl->sig = NULL;
+/*     sqrl->version = 0.0;
+ *     sqrl->options = NULL;
+ *     sqrl->key_len = 0;
+ *     sqrl->key = NULL;
+ *     sqrl->sig_len = 0;
+ *     sqrl->sig = NULL;
+ */
 
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, sqrl_to_string(r->pool, sqrl));
 
     return sqrl;
 }
 
-int sqrl_verify(apr_pool_t * p, const sqrl_rec * sqrl)
+int sqrl_verify(apr_pool_t * p, const sqrl_req_rec * sqrl_req)
 {
-    size_t url_len = strlen(sqrl->url);
-    unsigned long long sig_len = SQRL_SIGN_BYTES + url_len, msg_len;
+    size_t arg_len = strlen(sqrl_req->raw_clientarg);
+    size_t url_len = strlen(sqrl_req->raw_serverurl);
+    unsigned long long sig_len = SQRL_SIGN_BYTES + arg_len + url_len, msg_len;
     unsigned char *sig = apr_palloc(p, sig_len);
     unsigned char *msg = apr_palloc(p, sig_len);
     int verified;
 
     /* Build signature */
-    memcpy(sig, sqrl->sig, SQRL_SIGN_BYTES);
-    memcpy((sig + SQRL_SIGN_BYTES), sqrl->url, url_len);
+    memcpy(sig, sqrl_req->usr_sig, SQRL_SIGN_BYTES);
+    memcpy((sig + SQRL_SIGN_BYTES), sqrl_req->raw_clientarg, arg_len);
+    memcpy((sig + SQRL_SIGN_BYTES + arg_len), sqrl_req->raw_serverurl,
+           url_len);
 
     /* Verify signature */
-    verified = sqrl_crypto_sign_open(msg, &msg_len, sig, sig_len, sqrl->key);
+    verified =
+        sqrl_crypto_sign_open(msg, &msg_len, sig, sig_len,
+                              sqrl_req->client_args->key);
 
     return verified;
 }
@@ -220,72 +226,37 @@ static apr_array_header_t *sqrl_options_parse(apr_pool_t * p,
     return array;
 }
 
-apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl)
+apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl,
+                        const char *sqrl_uri)
 {
     sqrl_rec *sq = apr_palloc(r->pool, sizeof(sqrl_rec));
     sqrl_svr_cfg *sconf;
-    apreq_handle_t *apreq;
-    const apr_table_t *body;
-    apr_table_t *client_params, *server_params;
-    char *clientarg, *serverurl, *last;
-    const char *key64, *sig64, *version, *options;
+    apr_table_t *server_params;
+    char *uri;
     unsigned char *nonce, *nut_bytes, *nut_crypt;
     int nonce_len, nut_len;
     apr_status_t rv;
-    apr_ssize_t ssize;
 
     /* Load the server config for domain properties */
     sconf = ap_get_module_config(r->server->module_config, &sqrl_module);
 
-    /* Initiate libapreq */
-    apreq = apreq_handle_apache2(r);
+    /* Copy the uri into the sqrl struct */
+    sq->uri = apr_pstrdup(r->pool, sqrl_uri);
 
-    /* Parse the body parameters */
-    rv = apreq_body(apreq, &body);
-    if (rv != APR_SUCCESS) {
-        return rv;
-    }
-
-    /* Decode client args */
-    if (apr_table_get(body, "clientarg") == NULL) {
-        return SQRL_MISSING_CLIENTARG;
-    }
-    clientarg = apr_pstrdup(r->pool, apr_table_get(body, "clientarg"));
-    ssize = apreq_unescape(clientarg);
-    if (ssize < 0) {
-        return SQRL_INVALID_CLIENTARG;
-    }
-
-    /* Parse client parameters */
-    client_params = apr_table_make(r->pool, 3);
-    rv = apreq_parse_query_string(r->pool, client_params, clientarg);
-    if (rv != APR_SUCCESS) {
-        return SQRL_INVALID_CLIENTARG;
-    }
-
-    /* Decode server url */
-    if (apr_table_get(body, "serverurl") == NULL) {
-        return SQRL_MISSING_SERVERURL;
-    }
-    serverurl = apr_pstrdup(r->pool, apr_table_get(body, "serverurl"));
-    ssize = apreq_unescape(serverurl);
-    if (ssize < 0) {
+    /* Find the uri's query string */
+    uri = strchr(sqrl_uri, '?');
+    if (uri == NULL || *(++uri) == '\0') {
         return SQRL_INVALID_SERVERURL;
     }
-    sq->url = serverurl;
 
-    /* Parse server parameters */
-    serverurl = strchr(serverurl, '?');
-    if (serverurl == NULL || *(++serverurl) == '\0') {
-        return SQRL_INVALID_SERVERURL;
-    }
+    /* Parse the query string */
     server_params = apr_table_make(r->pool, 2);
-    rv = apreq_parse_query_string(r->pool, server_params, serverurl);
-    if (rv != APR_SUCCESS) {
+    rv = apreq_parse_query_string(r->pool, server_params, uri);
+    if (apreq_module_status_is_error(rv)) {
         return SQRL_INVALID_SERVERURL;
     }
 
-    /* Get the session id */
+    /* Get the nonce */
     sq->nonce = apr_table_get(server_params, "n");
     if (!sq->nonce) {
         return SQRL_MISSING_SID;
@@ -318,51 +289,212 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl)
         return SQRL_INVALID_NUT;
     }
 
+    /* Set sqrl */
+    *sqrl = sq;
+
+    if (1 == 1)
+        return APR_SUCCESS;
+
+    /* Initiate libapreq */
+//    apreq = apreq_handle_apache2(r);
+//
+//    /* Parse the body parameters */
+//    rv = apreq_body(apreq, &body);
+//    if (rv != APR_SUCCESS) {
+//        return rv;
+//    }
+//
+//    /* Decode client args */
+//    if (apr_table_get(body, "clientarg") == NULL) {
+//        return SQRL_MISSING_CLIENTARG;
+//    }
+//    clientarg = apr_pstrdup(r->pool, apr_table_get(body, "clientarg"));
+//    ssize = apreq_unescape(clientarg);
+//    if (ssize < 0) {
+//        return SQRL_INVALID_CLIENTARG;
+//    }
+//
+//    /* Decode server url */
+//    if (apr_table_get(body, "serverurl") == NULL) {
+//        return SQRL_MISSING_SERVERURL;
+//    }
+//    uri = apr_pstrdup(r->pool, apr_table_get(body, "serverurl"));
+//    ssize = apreq_unescape(uri);
+//    if (ssize < 0) {
+//        return SQRL_INVALID_SERVERURL;
+//    }
+//    sq->uri = uri;
+//
+//    /* Parse server parameters */
+//    /* Get the signature */
+//    sig64 = apr_table_get(body, "usrkeysig");
+//    if (!sig64) {
+//        return SQRL_MISSING_SIG;
+//    }
+//    /* Decode the signature */
+//    sq->sig = sqrl_base64url_decode(r->pool, sig64, &sq->sig_len);
+//    if (sq->sig_len < SQRL_SIGN_BYTES) {
+//        return SQRL_INVALID_SIG;
+//    }
+//
+//    return APR_SUCCESS;
+}
+
+apr_status_t sqrl_client_args_parse(request_rec * r,
+                                    sqrl_client_args_rec ** sqrl_client_args,
+                                    const char *raw_clientarg)
+{
+    sqrl_client_args_rec *args =
+        apr_palloc(r->pool, sizeof(sqrl_client_args_rec));
+    char *client_args;
+    apr_table_t *client_params;
+    const char *version, *options, *key64;
+    int key_len;
+    apr_status_t rv;
+    apr_ssize_t ssize;
+
+    /* Decode client args */
+    client_args = apr_pstrdup(r->pool, raw_clientarg);
+    ssize = apreq_unescape(client_args);
+    if (ssize < 0) {
+        return SQRL_INVALID_CLIENTARG;
+    }
+
+    /* Parse client parameters */
+    client_params = apr_table_make(r->pool, 3);
+    rv = apreq_parse_query_string(r->pool, client_params, client_args);
+    if (rv != APR_SUCCESS) {
+        return SQRL_INVALID_CLIENTARG;
+    }
+
+    /* Get the version */
+    version = apr_table_get(client_params, "ver");
+    if (version) {
+        if (strcmp("1", version) != 0) {
+            return SQRL_INVALID_VER;
+        }
+    }
+    args->version = "1";
+
+    /* Get the options */
+    options = apr_table_get(client_params, "opt");
+    if (options) {
+        args->options = sqrl_options_parse(r->pool, options);
+    }
+    else {
+        args->options = apr_array_make(r->pool, 0, sizeof(char *));
+    }
+
     /* Get the public key */
     key64 = apr_table_get(client_params, "usrkey");
     if (!key64) {
         return SQRL_MISSING_KEY;
     }
     /* Decode the public key */
-    sq->key = sqrl_base64url_decode(r->pool, key64, &sq->key_len);
-    if (sq->key_len != SQRL_PUBLIC_KEY_BYTES) {
-        return SQRL_INVALID_SID;
+    args->key = sqrl_base64url_decode(r->pool, key64, &key_len);
+    if (key_len != SQRL_PUBLIC_KEY_BYTES) {
+        return SQRL_INVALID_KEY;
     }
 
-    /* Get the version */
-    version = apr_table_get(client_params, "ver");
-    if (version) {
-        sq->version = (float) strtod(version, &last);
-        if (*last != '\0') {
-            return SQRL_INVALID_VER;
-        }
-    }
-    else {
-        sq->version = 1.0;
+    /* Set sqrl_client_args */
+    *sqrl_client_args = args;
+
+    return APR_SUCCESS;
+}
+
+apr_status_t sqrl_req_parse(request_rec * r, sqrl_req_rec ** sqrl_req)
+{
+    sqrl_req_rec *req = apr_palloc(r->pool, sizeof(sqrl_req_rec));
+    sqrl_rec *sqrl;
+    sqrl_client_args_rec *client_args;
+    apreq_handle_t *apreq;
+    const apr_table_t *body;
+    char *serverurl;
+    int usr_sig_len, new_sig_len, iuk_sig_len;
+    apr_status_t rv;
+    apr_ssize_t ssize;
+
+    /* Initiate libapreq */
+    apreq = apreq_handle_apache2(r);
+
+    /* Parse the body parameters */
+    rv = apreq_body(apreq, &body);
+    if (apreq_module_status_is_error(rv)) {
+        return rv;
     }
 
-    /* Get options */
-    options = apr_table_get(client_params, "opt");
-    if (options) {
-        sq->options = sqrl_options_parse(r->pool, options);
+    /* Get the client args */
+    req->raw_clientarg = apr_table_get(body, "clientarg");
+    if (req->raw_clientarg == NULL) {
+        return SQRL_MISSING_CLIENTARG;
     }
-    else {
-        sq->options = apr_array_make(r->pool, 0, sizeof(char *));
+    //ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, req->raw_clientarg);
+
+    /* Parse the client args */
+    rv = sqrl_client_args_parse(r, &client_args, req->raw_clientarg);
+    if (rv != APR_SUCCESS) {
+        return rv;
+    }
+    req->client_args = client_args;
+
+    /* Get the server's uri */
+    req->raw_serverurl = apr_table_get(body, "serverurl");
+    if (req->raw_serverurl == NULL) {
+        return SQRL_MISSING_SERVERURL;
     }
 
-    /* Get the signature */
-    sig64 = apr_table_get(body, "usrkeysig");
-    if (!sig64) {
+    /* Decode the server's uri */
+    serverurl = apr_pstrdup(r->pool, req->raw_serverurl);
+    ssize = apreq_unescape(serverurl);
+    if (ssize < 0) {
+        return SQRL_INVALID_SERVERURL;
+    }
+    req->server_uri = serverurl;
+
+    /* Parse the server's uri */
+    rv = sqrl_parse(r, &sqrl, req->server_uri);
+    if (rv != APR_SUCCESS) {
+        return rv;
+    }
+    req->sqrl = sqrl;
+    //ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, sqrl_to_string(r->pool, sqrl));
+
+    /* Get the user's signature */
+    req->raw_usrsig = apr_table_get(body, "usrkeysig");
+    if (req->raw_usrsig == NULL) {
         return SQRL_MISSING_SIG;
     }
-    /* Decode the signature */
-    sq->sig = sqrl_base64url_decode(r->pool, sig64, &sq->sig_len);
-    if (sq->sig_len < SQRL_SIGN_BYTES) {
+
+    /* Decode the user's signature */
+    req->usr_sig =
+        sqrl_base64url_decode(r->pool, req->raw_usrsig, &usr_sig_len);
+    if (usr_sig_len < SQRL_SIGN_BYTES) {
         return SQRL_INVALID_SIG;
     }
 
-    /* Set sqrl */
-    *sqrl = sq;
+    /* Get the new signature */
+    req->raw_newsig = apr_table_get(body, "newkeysig");
+    if (req->raw_newsig != NULL) {
+        /* Decode the new signature */
+        req->new_sig =
+            sqrl_base64url_decode(r->pool, req->raw_newsig, &new_sig_len);
+        if (new_sig_len < SQRL_SIGN_BYTES) {
+            return SQRL_INVALID_SIG;
+        }
+    }
+
+    /* Get the id unlock signature */
+    req->raw_iuksig = apr_table_get(body, "iukkeysig");
+    if (req->raw_iuksig != NULL) {
+        /* Decode the id unlock signature */
+        req->iuk_sig =
+            sqrl_base64url_decode(r->pool, req->raw_iuksig, &iuk_sig_len);
+        if (iuk_sig_len < SQRL_SIGN_BYTES) {
+            return SQRL_INVALID_SIG;
+        }
+    }
+
+    *sqrl_req = req;
 
     return APR_SUCCESS;
 }
@@ -375,11 +507,13 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl)
 static int authenticate_sqrl(request_rec * r)
 {
     sqrl_dir_cfg *dconf;
-    sqrl_rec *sqrl;
+    sqrl_req_rec *sqrl_req;
+    const sqrl_rec *sqrl;
     apr_status_t rv;
     int verified, enforce;
     apr_int32_t time_now;
     const char *option;
+    const apr_array_header_t *options;
     apr_size_t ip_len;
     unsigned char *ip_buff, *ip_hash;
 
@@ -395,17 +529,18 @@ static int authenticate_sqrl(request_rec * r)
 
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "Verifying SQRL code ...");
 
-    /* Parse out the sqrl data from the request */
-    rv = sqrl_parse(r, &sqrl);
+    /* Parse the sqrl request */
+    rv = sqrl_req_parse(r, &sqrl_req);
     if (rv != APR_SUCCESS) {
         ap_log_rerror(APLOG_MARK, LOG_WARNING, rv, r,
-                      "Error parsing the sqrl");
+                      "Error parsing the authentication request");
         return HTTP_BAD_REQUEST;
     }
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, sqrl_to_string(r->pool, sqrl));
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r,
+                  sqrl_req_to_string(r->pool, sqrl_req));
 
     /* Verify the signature */
-    verified = sqrl_verify(r->pool, sqrl);
+    verified = sqrl_verify(r->pool, sqrl_req);
     if (verified != 0) {
         ap_log_rerror(APLOG_MARK, LOG_WARNING, verified, r,
                       "SQRL failed verification");
@@ -414,6 +549,8 @@ static int authenticate_sqrl(request_rec * r)
     else {
         ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "SQRL sig verified");
     }
+
+    sqrl = sqrl_req->sqrl;
 
     /* Verify the time, timeout is 2 minutes */
     time_now = apr_time_sec(apr_time_now());
@@ -425,14 +562,15 @@ static int authenticate_sqrl(request_rec * r)
 
     /* Verify the IP address if it is enforced */
     verified = enforce = 0;
-    if (sqrl->options->nelts > 0) {
+    options = sqrl_req->client_args->options;
+    if (options->nelts > 0) {
         /* Search for the "enforce" option */
         do {
-            option = APR_ARRAY_IDX(sqrl->options, verified++, const char *);
-            if(strcmp("enforce", option) == 0) {
+            option = APR_ARRAY_IDX(options, verified++, const char *);
+            if (strcmp("enforce", option) == 0) {
                 enforce = 1;
             }
-        } while (verified < sqrl->options->nelts);
+        } while (verified < options->nelts);
 
         /* If enforce  was found, verify the IP hash */
         if (enforce) {
@@ -627,7 +765,7 @@ static APR_OPTIONAL_FN_TYPE(ap_ssi_get_tag_and_value) *
             return APR_SUCCESS;
         }
         if (url) {
-            apr_table_set(r->subprocess_env, url, sqrl->url);
+            apr_table_set(r->subprocess_env, url, sqrl->uri);
         }
         if (id) {
             apr_table_set(r->subprocess_env, id, sqrl->nut64);

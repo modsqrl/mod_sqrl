@@ -132,6 +132,10 @@ void int32_to_bytes(unsigned char bytes[4], apr_int32_t integer)
     *(bytes + 3) = integer >> 0 & 0xff;
 }
 
+#define str_or_null(str) (str ? str : "null")
+#define hex_or_null(pool, data, sz) \
+    (data ? bin2hex(pool, data, sz, NULL) : "null")
+
 static const char *ck_null(const char *val)
 {
     if (val) {
@@ -142,55 +146,93 @@ static const char *ck_null(const char *val)
     }
 }
 
-const char *sqrl_to_string(apr_pool_t * pool, sqrl_rec * sqrl)
+const char *sqrl_nut_to_string(apr_pool_t * pool, const sqrl_nut_rec * nut)
 {
-    char *timestamp, *nonce, *ip_hash, *key, *sig;
+    char *timestamp;
 
-    if (sqrl->nut->timestamp) {
+    if (nut->timestamp) {
         timestamp = apr_palloc(pool, APR_RFC822_DATE_LEN);
-        apr_rfc822_date(timestamp, apr_time_from_sec(sqrl->nut->timestamp));
+        apr_rfc822_date(timestamp, apr_time_from_sec(nut->timestamp));
     }
     else {
         timestamp = "null";
     }
-    if (sqrl->nut->nonce) {
-        nonce = bin2hex(pool, sqrl->nut->nonce, 4U, NULL);
+
+    return apr_psprintf(pool,
+                        "sqrl_nut_rec{timestamp=%s,counter=%d,"
+                        "nonce=%s,ip_hash=%s}",
+                        timestamp, (nut->counter ? nut->counter : 0),
+                        hex_or_null(pool, nut->nonce, 4U),
+                        hex_or_null(pool, nut->ip_hash, 4U));
+}
+
+const char *sqrl_to_string(apr_pool_t * pool, const sqrl_rec * sqrl)
+{
+    const char *nut;
+
+    if (sqrl->nut) {
+        nut = sqrl_nut_to_string(pool, sqrl->nut);
     }
     else {
-        nonce = "null";
-    }
-    if (sqrl->nut->nonce) {
-        ip_hash = bin2hex(pool, sqrl->nut->ip_hash, 4U, NULL);
-    }
-    else {
-        ip_hash = "null";
-    }
-    if (sqrl->key) {
-        key = bin2hex(pool, sqrl->key, sqrl->key_len, NULL);
-    }
-    else {
-        key = "null";
-    }
-    if (sqrl->sig) {
-        sig = bin2hex(pool, sqrl->sig, sqrl->sig_len, NULL);
-    }
-    else {
-        sig = "null";
+        nut = "null";
     }
 
     return apr_psprintf(pool,
-                        "sqrl_rec{url=%s,sqrl_nut_rec{timestamp=%s,counter=%d,"
-                        "nonce=%s,ip_hash=%s},nonce=%s,version=%f,"
-                        "options=%s,key_len=%d,key=%s,sig_len=%d,sig=%s}",
-                        ck_null(sqrl->url), timestamp,
-                        (sqrl->nut->counter ? sqrl->nut->counter : 0), nonce,
-                        ip_hash, ck_null(sqrl->nonce),
-                        (sqrl->version ? sqrl->version : 0.0),
-                        (sqrl->options ?
-                         apr_array_pstrcat(pool, sqrl->options,
-                                           ',') : "null"),
-                        (sqrl->key_len ? sqrl->key_len : 0), key,
-                        (sqrl->sig_len ? sqrl->sig_len : 0), sig);
+                        "sqrl_rec{uri=%s,nut=%s,nut64=%s,nonce=%s}",
+                        ck_null(sqrl->uri), nut,
+                        str_or_null(sqrl->nut64), ck_null(sqrl->nonce));
+}
+
+const char *sqrl_client_args_to_string(apr_pool_t * pool,
+                                       const sqrl_client_args_rec * args)
+{
+    char *options;
+
+    options =
+        (args->
+         options ? apr_array_pstrcat(pool, args->options, ',') : "null");
+    /*if (args->key) {
+       key = bin2hex(pool, args->key, SQRL_PUBLIC_KEY_BYTES, NULL);
+       }
+       else {
+       key = "null";
+       } */
+    //hex_or_null(pool, key, args->key, SQRL_PUBLIC_KEY_BYTES);
+
+    return apr_psprintf(pool,
+                        "sqrl_client_args_rec{version=%s,options=%s,key=%s}",
+                        ck_null(args->version), options,
+                        hex_or_null(pool, args->key, SQRL_PUBLIC_KEY_BYTES));
+}
+
+const char *sqrl_req_to_string(apr_pool_t * pool, const sqrl_req_rec * req)
+{
+    const char *client_args, *sqrl;
+
+    if (req->client_args) {
+        client_args = sqrl_client_args_to_string(pool, req->client_args);
+    }
+    else {
+        client_args = "null";
+    }
+    if (req->sqrl) {
+        sqrl = sqrl_to_string(pool, req->sqrl);
+    }
+    else {
+        sqrl = "null";
+    }
+
+    return apr_psprintf(pool,
+                        "sqrl_req_rec{raw_clientarg=%s,client_args=%s,"
+                        "raw_serverurl=%s,server_uri=%s,sqrl=%s,"
+                        "raw_usrsig=%s,usr_sig=%s}",
+                        str_or_null(req->raw_clientarg),
+                        client_args,
+                        str_or_null(req->raw_serverurl),
+                        str_or_null(req->server_uri),
+                        sqrl,
+                        str_or_null(req->raw_usrsig),
+                        hex_or_null(pool, req->usr_sig, SQRL_SIGN_BYTES));
 }
 
 apr_status_t write_out(request_rec * r, const char *response)

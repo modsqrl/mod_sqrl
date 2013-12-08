@@ -77,13 +77,20 @@ apr_int32_t bytes_to_int32(const unsigned char bytes[4]);
  */
 void int32_to_bytes(unsigned char bytes[4], apr_int32_t integer);
 
+const char *sqrl_nut_to_string(apr_pool_t * pool, const sqrl_nut_rec * nut);
+
 /*
  * Create a string representation of a sqrl_rec.
  * @param pool Allocate the new string.
  * @param sqrl sqrl_rec to stringify.
  * @return String of the sqrl_rec.
  */
-const char *sqrl_to_string(apr_pool_t * pool, sqrl_rec * sqrl);
+const char *sqrl_to_string(apr_pool_t * pool, const sqrl_rec * sqrl);
+
+const char *sqrl_client_args_to_string(apr_pool_t * pool,
+                                       const sqrl_client_args_rec * args);
+
+const char *sqrl_req_to_string(apr_pool_t * pool, const sqrl_req_rec * req);
 
 apr_status_t write_out(request_rec * r, const char *response);
 

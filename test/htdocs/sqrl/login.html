@@ -159,21 +159,26 @@
 		function login(uri) {
 			message("Signing the URL");
 			var log = {};
-			var parsedUrl, privat, keyPair, sig, master64, public64, sig64;
+			var parsedUri, privat, keyPair, sig, master64, public64, sig64;
 
 			log.url = uri;
-			parsedUrl = parseUrl(uri);
-			log.parsedUrl = parsedUrl;
+			parsedUri = parseUrl(uri);
+			log.parsedUrl = parsedUri;
 
 			master64 = loadMasterKey();
 			log.master = master64;
 
-			privat = nacl.crypto_auth(nacl.encode_utf8(parsedUrl.domain),
+			privat = nacl.crypto_auth(nacl.encode_utf8(parsedUri.domain),
 					fromAscii(master64));
 
 			keyPair = nacl.crypto_sign_keypair_from_seed(privat);
 			public64 = toAsciiUrl(keyPair.signPk);
-			sig = nacl.crypto_sign(nacl.encode_utf8(uri), keyPair.signSk).subarray(0, 64);
+
+			var clientarg = "ver=1&opt=enforce&usrkey=" + public64;
+			log.args = clientarg;
+
+			sig = nacl.crypto_sign(nacl.encode_utf8(clientarg + uri),
+					keyPair.signSk).subarray(0, 64);
 			sig64 = toAsciiUrl(sig);
 
 			log.private = toAsciiUrl(privat);
@@ -186,11 +191,7 @@
 			}
 			log.authUrl = url;
 
-			var clientarg = "ver=1&opt=enforce&usrkey=" + public64;
-			log.args = clientarg;
-			clientarg = encodeURIComponent(clientarg);
-
-			var post = "clientarg=" + clientarg + "&" +
+			var post = "clientarg=" + encodeURIComponent(clientarg) + "&" +
 						"serverurl=" + encodeURIComponent(uri) + "&" +
 						"usrkeysig=" + sig64;
 			log.post = post;

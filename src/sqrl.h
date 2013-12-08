@@ -64,23 +64,41 @@ typedef struct
 
 typedef struct
 {
-    const char *url;
+    const char *uri;
     const sqrl_nut_rec *nut;
     const char *nut64;
     const char *nonce;
-    float version;
-    const apr_array_header_t *options;
-    int key_len;
-    const unsigned char *key;
-    int sig_len;
-    const unsigned char *sig;
 } sqrl_rec;
+
+typedef struct
+{
+    const char *version;
+    const apr_array_header_t *options;
+    const unsigned char *key;
+} sqrl_client_args_rec;
+
+typedef struct
+{
+    const char *raw_clientarg;
+    const sqrl_client_args_rec *client_args;
+    const char *raw_serverurl;
+    const char *server_uri;
+    const sqrl_rec *sqrl;
+    const char *raw_usrsig;
+    const unsigned char *usr_sig;
+    const char *raw_newsig;
+    const unsigned char *new_sig;
+    const char *raw_iuksig;
+    const unsigned char *iuk_sig;
+} sqrl_req_rec;
+
 
 sqrl_rec *sqrl_create(request_rec * r);
 
-apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl);
+apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl,
+                        const char *sqrl_uri);
 
-int sqrl_verify(apr_pool_t * pool, const sqrl_rec * sqrl);
+int sqrl_verify(apr_pool_t * pool, const sqrl_req_rec * sqrl_req);
 
 
 #endif
