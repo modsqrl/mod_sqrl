@@ -27,6 +27,7 @@
 	</style>
 	<script src="nacl_factory.js"></script>
 	<script type="text/javascript">
+		var nacl = nacl_factory.instantiate();
 
 		/**
 		 * @param {string} msg Message to display.
@@ -44,6 +45,15 @@
 		}
 
 		/**
+		 * @param {Uint8Array} u8 Binary array to convert to base64url.
+		 * @returns {string} Base64url string.
+		 */
+		function toAsciiUrl(u8) {
+			return btoa(String.fromCharCode.apply(null, u8)).
+					replace(/[+]/g, "-").replace(/[/]/g, "_").replace(/[=]/g, "");
+		}
+
+		/**
 		 * @param {string} b64 Base64 string to decode.
 		 * @returns {Uint8Array} Binary array.
 		 */
@@ -53,30 +63,8 @@
 			}));
 		}
 
-		function authenticate(sqrlurl, sqrlkey, sqrlsig, log) {
+		function sendAuthentication(url, post, log) {
 			message("Authenticating you");
-			// Swap the sqrl scheme for https
-			var url = sqrlurl.substring(0, 4);
-			if(url == "qrl:") {
-				url = "http:" + sqrlurl.substring(4);
-			} else if(url == "sqrl") {
-				url = "https" + sqrlurl.substring(4);
-			} else {
-				console.error("Invalid URL. Must start with 'sqr://' or 'sqrl://'");
-				return;
-			}
-			url = url.replace(/[|]/, "/");
-			log.authUrl = url;
-
-			var clientarg = "ver=1&opt=enforce&usrkey=" + sqrlkey;
-			log.args = clientarg;
-			clientarg = encodeURIComponent(clientarg);
-
-			var post = "clientarg=" + clientarg + "&" +
-								"serverurl=" + encodeURIComponent(sqrlurl) + "&" +
-								"usrkeysig=" + sqrlsig;
-			log.post = post;
-
 			var xhr = new XMLHttpRequest();
 			xhr.onreadystatechange = function() {
 				if(xhr.readyState == 4) {
@@ -100,7 +88,7 @@
 					appendDef(dl, "domain", log.parsedUrl.domain);
 					appendDef(dl, "path", log.parsedUrl.path);
 					appendDef(dl, "args", log.parsedUrl.args);
-					appendDef(dl, "hasMaster", log.hasMaster);
+					/*appendDef(dl, "hasMaster", log.hasMaster);*/
 					appendDef(dl, "master", log.master);
 					appendDef(dl, "private", log.private);
 					appendDef(dl, "public", log.public);
@@ -136,58 +124,84 @@
 			return u;
 		}
 
-		/**
-		 * @param {string} url
-		 */
-		function signUrl(url) {
-			message("Signing the URL");
-			var log = {};
-			var nacl = nacl_factory.instantiate();
-			var parsedUrl, privat, keyPair, sig, master64, public64, sig64;
-
-			log.url = url;
-			parsedUrl = parseUrl(url);
-			log.parsedUrl = parsedUrl;
-
-			master64 = localStorage.getItem("pk");
+		function loadMasterKey() {
+			var master64 = localStorage.getItem("mk");
 			if(!master64) {
+				console.log("Generating a new Master Key");
 				var master = new Uint8Array(32);
 				for(var i = 0 ; i < 32 ; ++i) {
 					master[i] = (Math.random() * 255)|0;
 				}
 				master64 = toAscii(master);
-				localStorage.setItem("pk", master64);
-
-				log.hasMaster = false;
-				log.master = master64;
-			} else {
-				log.hasMaster = true;
-				log.master = master64;
+				localStorage.setItem("mk", master64);
 			}
+			return master64;
+		}
+
+		function sqrlUriToUrl(uri) {
+			// Swap the sqrl scheme for https
+			var url = uri.substring(0, 4);
+			if(url == "qrl:") {
+				url = "http:" + uri.substring(4);
+			} else if(url == "sqrl") {
+				url = "https" + uri.substring(4);
+			} else {
+				console.error("Invalid URL. Must start with 'sqr://' or 'sqrl://'");
+				return null;
+			}
+			url = url.replace(/[|]/, "/");
+			return url;
+		}
+
+		/**
+		 * @param {string} uri
+		 */
+		function login(uri) {
+			message("Signing the URL");
+			var log = {};
+			var parsedUrl, privat, keyPair, sig, master64, public64, sig64;
+
+			log.url = uri;
+			parsedUrl = parseUrl(uri);
+			log.parsedUrl = parsedUrl;
+
+			master64 = loadMasterKey();
+			log.master = master64;
 
 			privat = nacl.crypto_auth(nacl.encode_utf8(parsedUrl.domain),
 					fromAscii(master64));
 
 			keyPair = nacl.crypto_sign_keypair_from_seed(privat);
-			public64 = toAscii(keyPair.signPk);
-			public64 = public64.replace(/[+]/g, "-").replace(/[/]/g, "_").
-					replace(/[=]/g, "");
-			sig = nacl.crypto_sign(nacl.encode_utf8(url), keyPair.signSk).subarray(0, 64);
-			sig64 = toAscii(sig).replace(/[+]/g, "-").replace(/[/]/g, "_").
-					replace(/[=]/g, "");
+			public64 = toAsciiUrl(keyPair.signPk);
+			sig = nacl.crypto_sign(nacl.encode_utf8(uri), keyPair.signSk).subarray(0, 64);
+			sig64 = toAsciiUrl(sig);
 
-			log.private = toAscii(privat).replace(/[+]/g, "-").
-					replace(/[/]/g, "_").replace(/[=]/g, "");
+			log.private = toAsciiUrl(privat);
 			log.public = public64;
 			log.sig = sig64;
 
-			authenticate(url, public64, sig64, log);
+			var url = sqrlUriToUrl(uri);
+			if(url === null) {
+				message("Could not parse the SQRL URI");
+			}
+			log.authUrl = url;
+
+			var clientarg = "ver=1&opt=enforce&usrkey=" + public64;
+			log.args = clientarg;
+			clientarg = encodeURIComponent(clientarg);
+
+			var post = "clientarg=" + clientarg + "&" +
+						"serverurl=" + encodeURIComponent(uri) + "&" +
+						"usrkeysig=" + sig64;
+			log.post = post;
+
+			sendAuthentication(url, post, log);
 		}
 
 		window.addEventListener("load", function() {
 			document.getElementById("sqrl_auth").onclick = function(event) {
 				event.preventDefault();
-				signUrl(this.href);
+				login(this.href);
 			}
 		});
 	</script>
