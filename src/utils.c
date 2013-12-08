@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#include "http_protocol.h"
 #include "apr_base64.h"
 #include "apr_pools.h"
 #include "apr_strings.h"
@@ -190,4 +191,17 @@ const char *sqrl_to_string(apr_pool_t * pool, sqrl_rec * sqrl)
                                            ',') : "null"),
                         (sqrl->key_len ? sqrl->key_len : 0), key,
                         (sqrl->sig_len ? sqrl->sig_len : 0), sig);
+}
+
+apr_status_t write_out(request_rec * r, const char *response)
+{
+    apr_bucket_brigade *bb;
+    apr_bucket *b;
+
+    bb = apr_brigade_create(r->pool, r->connection->bucket_alloc);
+    b = apr_bucket_immortal_create(response, strlen(response),
+                                   bb->bucket_alloc);
+    APR_BRIGADE_INSERT_TAIL(bb, b);
+    APR_BRIGADE_INSERT_TAIL(bb, apr_bucket_eos_create(bb->bucket_alloc));
+    return ap_pass_brigade(r->output_filters, bb);
 }

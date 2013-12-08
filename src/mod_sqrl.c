@@ -461,6 +461,10 @@ static int authenticate_sqrl(request_rec * r)
         }
     }
 
+    /* Return a status message to the client */
+    ap_set_content_type(r, "application/x-www-form-urlencoded");
+    rv = write_out(r, "ver=1&result=1&display=success");
+
     return HTTP_OK;
 }
 
@@ -471,8 +475,6 @@ static int sign_sqrl(request_rec * r)
     char *url, *end, *pipe;
     apr_size_t url_len;
     unsigned long long signature_len;
-    apr_bucket_brigade *bb;
-    apr_bucket *b;
     apr_status_t rv;
     char *response;
 
@@ -550,12 +552,7 @@ static int sign_sqrl(request_rec * r)
 
     /* Write output */
     ap_set_content_type(r, "text/plain");
-    bb = apr_brigade_create(r->pool, r->connection->bucket_alloc);
-    b = apr_bucket_immortal_create(response, strlen(response),
-                                   bb->bucket_alloc);
-    APR_BRIGADE_INSERT_TAIL(bb, b);
-    APR_BRIGADE_INSERT_TAIL(bb, apr_bucket_eos_create(bb->bucket_alloc));
-    rv = ap_pass_brigade(r->output_filters, bb);
+    rv = write_out(r, response);
     if (rv != APR_SUCCESS) {
         ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r,
                       "Error writing the response");

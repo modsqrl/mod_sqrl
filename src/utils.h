@@ -85,5 +85,7 @@ void int32_to_bytes(unsigned char bytes[4], apr_int32_t integer);
  */
 const char *sqrl_to_string(apr_pool_t * pool, sqrl_rec * sqrl);
 
+apr_status_t write_out(request_rec * r, const char *response);
+
 
 #endif
