@@ -14,10 +14,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#include "ctype.h"
 #include "http_protocol.h"
 #include "apr_base64.h"
 #include "apr_pools.h"
 #include "apr_strings.h"
+#include "apr_tables.h"
 #include "apr_time.h"
 
 #include "sodium/utils.h"
@@ -33,6 +35,71 @@ char *get_client_ip(request_rec * r)
 #else
     return r->connection->remote_ip;
 #endif
+}
+
+char *trim(char *str)
+{
+    register char *s = str;
+
+    if(str == NULL){
+        return NULL;
+    }
+
+    /* Scan over the leading whitespace */
+    while(isspace(*s)) {
+        ++s;
+    }
+    str = s;
+
+    /* Scan to the end */
+    while(*s != '\0') {
+        ++s;
+    }
+
+    /* Scan over the trailing whitespace */
+    while(isspace(*(s-1))) {
+        --s;
+    }
+    *s = '\0';
+
+    return str;
+}
+
+apr_table_t *parse_parameters(apr_pool_t * p, char *params)
+{
+    char *param, *value, *last;
+    apr_array_header_t *param_array;
+    apr_table_t *param_table;
+
+    /* Parse each line into an array */
+    param_array = apr_array_make(p, 3, sizeof(char*));
+    for (param = apr_strtok(params, "\r\n", &last) ;
+         param != NULL ; param = apr_strtok(NULL, "\r\n", &last)) {
+        APR_ARRAY_PUSH(param_array, char*) = param;
+    }
+
+    /* Parse each name=value into a table */
+    param_table = apr_table_make(p, param_array->nelts);
+    while(param_array->nelts > 0) {
+        param = *(char**)apr_array_pop(param_array);
+        /* Get the parameter name */
+        param = trim(apr_strtok(param, "=", &last));
+        /* Skip it if it's empty */
+        if(*param == '\0') {
+            continue;
+        }
+        /* Get the parameter value */
+        value = trim(apr_strtok(NULL, "\0", &last));
+        /* If only the name was given, value will be null */
+        if(value == NULL) {
+            apr_table_setn(param_table, param, "");
+        }
+        else {
+            apr_table_setn(param_table, param, value);
+        }
+    }
+
+    return param_table;
 }
 
 char *sqrl_base64_encode(apr_pool_t * p, const uchar *plain,
@@ -124,6 +191,7 @@ uchar *sqrl_base64_decode(apr_pool_t * p, const char *b64,
         *s++ = ((get(2) << 6) & 0xc0);
         break;
     }
+    *s = '\0';
 
     if(plain_len) {
         *plain_len = s - str - 1;
@@ -221,13 +289,6 @@ const char *sqrl_client_args_to_string(apr_pool_t * pool,
     options =
         (args->options ? apr_array_pstrcat(pool, args->options, ',') :
          "null");
-    /*if (args->key) {
-       key = bin2hex(pool, args->key, SQRL_PUBLIC_KEY_BYTES, NULL);
-       }
-       else {
-       key = "null";
-       } */
-    //hex_or_null(pool, key, args->key, SQRL_PUBLIC_KEY_BYTES);
 
     return apr_psprintf(pool,
                         "sqrl_client_args_rec{version=%s,options=%s,key=%s}",

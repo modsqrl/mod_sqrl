@@ -25,7 +25,8 @@
 			white-space: nowrap;
 		}
 	</style>
-	<script src="https://raw.github.com/tonyg/js-nacl/master/lib/nacl_factory.js"></script>
+	<!--<script src="https://raw.github.com/tonyg/js-nacl/master/lib/nacl_factory.js"></script>-->
+	<script src="nacl_factory.js"></script>
 	<script type="text/javascript">
 		var nacl = nacl_factory.instantiate();
 
@@ -51,6 +52,11 @@
 		function toAsciiUrl(u8) {
 			return btoa(String.fromCharCode.apply(null, u8)).
 					replace(/[+]/g, "-").replace(/[/]/g, "_").replace(/[=]/g, "");
+		}
+
+		function sqrlBtoa(str) {
+			return btoa(str).replace(/[+]/g, "-").replace(/[/]/g, "_").
+					replace(/[=]/g, "");
 		}
 
 		/**
@@ -159,11 +165,12 @@
 		function login(uri) {
 			message("Signing the URL");
 			var log = {};
-			var parsedUri, privat, keyPair, sig, master64, public64, sig64;
+			var parsedUri, privat, keyPair, sig, uri64, master64, public64, sig64;
 
 			log.url = uri;
 			parsedUri = parseUrl(uri);
 			log.parsedUrl = parsedUri;
+			uri64 = sqrlBtoa(uri);
 
 			master64 = loadMasterKey();
 			log.master = master64;
@@ -174,10 +181,11 @@
 			keyPair = nacl.crypto_sign_keypair_from_seed(privat);
 			public64 = toAsciiUrl(keyPair.signPk);
 
-			var clientarg = "ver=1&opt=enforce&usrkey=" + public64;
+			var clientarg = "ver  =  1  \r\n abc \n opt=  enforce  \n  \r\n  usrkey  = " + public64 + "\r\n \n \r\n";
 			log.args = clientarg;
+			clientarg = sqrlBtoa(clientarg);
 
-			sig = nacl.crypto_sign(nacl.encode_utf8(clientarg + uri),
+			sig = nacl.crypto_sign(nacl.encode_utf8(clientarg + uri64),
 					keyPair.signSk).subarray(0, 64);
 			sig64 = toAsciiUrl(sig);
 
@@ -191,8 +199,8 @@
 			}
 			log.authUrl = url;
 
-			var post = "clientarg=" + encodeURIComponent(clientarg) + "&" +
-						"serverurl=" + encodeURIComponent(uri) + "&" +
+			var post = "clientarg=" + clientarg + "&" +
+						"serverurl=" + uri64 + "&" +
 						"usrkeysig=" + sig64;
 			log.post = post;
 

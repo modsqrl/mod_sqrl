@@ -18,6 +18,7 @@ limitations under the License.
 #define SQRL_UTILS_H
 
 #include "apr_pools.h"
+#include "apr_tables.h"
 #include "sqrl.h"
 
 typedef unsigned char uchar;
@@ -28,6 +29,23 @@ typedef unsigned char uchar;
  * @param r Request.
  */
 char *get_client_ip(request_rec * r);
+
+/*
+ * Remove whitespace from the beginning and end of a string. The only change
+ * to the supplied string is the resetting of the terminating '\0'.
+ * @param str String to trim.
+ * @return Pointer to the first non-whitespace character in the string.
+ */
+char *trim(char *str);
+
+/*
+ * Parse name/value pairs into a table. There must be one pair per line and
+ * pairs must be formated as name=value.
+ * @param p Memory pool to allocate the table.
+ * @param params Parameters to parse.
+ * @return Table of parameters.
+ */
+apr_table_t *parse_parameters(apr_pool_t * p, char *params);
 
 /*
  * Encode binary data to URL-safe base64.

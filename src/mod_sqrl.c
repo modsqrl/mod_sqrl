@@ -160,15 +160,6 @@ sqrl_rec *sqrl_create(request_rec * r)
                         sqrl->nut64, "&n=", sqrl->nonce, NULL);
     }
 
-    /* Initialize the remaining fields */
-/*     sqrl->version = 0.0;
- *     sqrl->options = NULL;
- *     sqrl->key_len = 0;
- *     sqrl->key = NULL;
- *     sqrl->sig_len = 0;
- *     sqrl->sig = NULL;
- */
-
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, sqrl_to_string(r->pool, sqrl));
 
     return sqrl;
@@ -234,7 +225,7 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl,
     apr_table_t *server_params;
     char *uri;
     unsigned char *nonce, *nut_bytes, *nut_crypt;
-    size_t nonce_len, nut_len;
+    size_t dec_len;
     apr_status_t rv;
 
     /* Load the server config for domain properties */
@@ -262,8 +253,8 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl,
         return SQRL_MISSING_SID;
     }
     /* Decode the nonce */
-    nonce = sqrl_base64_decode(r->pool, sq->nonce, &nonce_len);
-    if (nonce_len != SQRL_NONCE_BYTES) {
+    nonce = sqrl_base64_decode(r->pool, sq->nonce, &dec_len);
+    if (dec_len != SQRL_NONCE_BYTES) {
         return SQRL_INVALID_SID;
     }
 
@@ -273,8 +264,8 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl,
         return SQRL_MISSING_NUT;
     }
     /* Decode the nut */
-    nut_bytes = sqrl_base64_decode(r->pool, sq->nut64, &nut_len);
-    if (nut_len != 16) {
+    nut_bytes = sqrl_base64_decode(r->pool, sq->nut64, &dec_len);
+    if (dec_len != 16) {
         return SQRL_INVALID_NUT;
     }
 
@@ -304,23 +295,17 @@ apr_status_t sqrl_client_args_parse(request_rec * r,
     char *client_args;
     apr_table_t *client_params;
     const char *version, *options, *key64;
-    size_t key_len;
-    apr_status_t rv;
-    apr_ssize_t ssize;
+    size_t dec_len;
 
-    /* Decode client args */
-    client_args = apr_pstrdup(r->pool, raw_clientarg);
-    ssize = apreq_unescape(client_args);
-    if (ssize < 0) {
+    /* Decode the client args */
+    client_args = (char*)sqrl_base64_decode(r->pool, raw_clientarg, &dec_len);
+    if(client_args == NULL) {
         return SQRL_INVALID_CLIENTARG;
     }
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "client_args = %s", client_args);
 
     /* Parse client parameters */
-    client_params = apr_table_make(r->pool, 3);
-    rv = apreq_parse_query_string(r->pool, client_params, client_args);
-    if (rv != APR_SUCCESS) {
-        return SQRL_INVALID_CLIENTARG;
-    }
+    client_params = parse_parameters(r->pool, client_args);
 
     /* Get the version */
     version = apr_table_get(client_params, "ver");
@@ -346,8 +331,8 @@ apr_status_t sqrl_client_args_parse(request_rec * r,
         return SQRL_MISSING_KEY;
     }
     /* Decode the public key */
-    args->key = sqrl_base64_decode(r->pool, key64, &key_len);
-    if (key_len != SQRL_PUBLIC_KEY_BYTES) {
+    args->key = sqrl_base64_decode(r->pool, key64, &dec_len);
+    if (dec_len != SQRL_PUBLIC_KEY_BYTES) {
         return SQRL_INVALID_KEY;
     }
 
@@ -365,9 +350,8 @@ apr_status_t sqrl_req_parse(request_rec * r, sqrl_req_rec ** sqrl_req)
     apreq_handle_t *apreq;
     const apr_table_t *body;
     char *serverurl;
-    size_t usr_sig_len, new_sig_len, iuk_sig_len;
+    size_t dec_len;
     apr_status_t rv;
-    apr_ssize_t ssize;
 
     /* Initiate libapreq */
     apreq = apreq_handle_apache2(r);
@@ -398,9 +382,8 @@ apr_status_t sqrl_req_parse(request_rec * r, sqrl_req_rec ** sqrl_req)
     }
 
     /* Decode the server's uri */
-    serverurl = apr_pstrdup(r->pool, req->raw_serverurl);
-    ssize = apreq_unescape(serverurl);
-    if (ssize < 0) {
+    serverurl = (char*)sqrl_base64_decode(r->pool, req->raw_serverurl, NULL);
+    if(serverurl == NULL) {
         return SQRL_INVALID_SERVERURL;
     }
     req->server_uri = serverurl;
@@ -421,8 +404,8 @@ apr_status_t sqrl_req_parse(request_rec * r, sqrl_req_rec ** sqrl_req)
 
     /* Decode the user's signature */
     req->usr_sig =
-        sqrl_base64_decode(r->pool, req->raw_usrsig, &usr_sig_len);
-    if (usr_sig_len < SQRL_SIGN_BYTES) {
+        sqrl_base64_decode(r->pool, req->raw_usrsig, &dec_len);
+    if (dec_len < SQRL_SIGN_BYTES) {
         return SQRL_INVALID_SIG;
     }
 
@@ -431,8 +414,8 @@ apr_status_t sqrl_req_parse(request_rec * r, sqrl_req_rec ** sqrl_req)
     if (req->raw_newsig != NULL) {
         /* Decode the new signature */
         req->new_sig =
-            sqrl_base64_decode(r->pool, req->raw_newsig, &new_sig_len);
-        if (new_sig_len < SQRL_SIGN_BYTES) {
+            sqrl_base64_decode(r->pool, req->raw_newsig, &dec_len);
+        if (dec_len < SQRL_SIGN_BYTES) {
             return SQRL_INVALID_SIG;
         }
     }
@@ -442,8 +425,8 @@ apr_status_t sqrl_req_parse(request_rec * r, sqrl_req_rec ** sqrl_req)
     if (req->raw_iuksig != NULL) {
         /* Decode the id unlock signature */
         req->iuk_sig =
-            sqrl_base64_decode(r->pool, req->raw_iuksig, &iuk_sig_len);
-        if (iuk_sig_len < SQRL_SIGN_BYTES) {
+            sqrl_base64_decode(r->pool, req->raw_iuksig, &dec_len);
+        if (dec_len < SQRL_SIGN_BYTES) {
             return SQRL_INVALID_SIG;
         }
     }
