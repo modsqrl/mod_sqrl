@@ -14,12 +14,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#ifndef SQRL_UTILS_H
+#define SQRL_UTILS_H
+
 #include "apr_pools.h"
 #include "sqrl.h"
 
-
-#ifndef SQRL_UTILS_H
-#define SQRL_UTILS_H
+typedef unsigned char uchar;
 
 
 /*
@@ -36,20 +37,17 @@ char *get_client_ip(request_rec * r);
  * @param plain_len Number of bytes in plain to encode.
  * @return Base64url encoded string. Terminated by '\0'.
  */
-char *sqrl_base64url_encode(apr_pool_t * p, const unsigned char *plain,
-                            unsigned int plain_len);
+char *sqrl_base64_encode(apr_pool_t * p, const uchar *plain, size_t plain_len);
 
 /*
  * Decode binary data from a URL-safe base64 string.
  * http://tools.ietf.org/html/rfc4648
  * @param p Allocates the decoded data.
- * @param encoded Base64 string to decode. '\0' terminated. Does not need
- *                padding.
+ * @param b64 Base64 string to decode. '\0' terminated.
  * @param plain_len Number of bytes decoded. May be NULL.
  * @return The decoded plain data. '\0' does not terminate the data.
  */
-unsigned char *sqrl_base64url_decode(apr_pool_t * p, const char *encoded,
-                                     int *plain_len);
+uchar *sqrl_base64_decode(apr_pool_t * p, const char *b64, size_t *plain_len);
 
 /*
  * Encode binary data to a hexadecimal string.

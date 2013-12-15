@@ -104,7 +104,7 @@ sqrl_rec *sqrl_create(request_rec * r)
 
     /* Convert the nonce to base64 */
     sqrl->nonce =
-        sqrl_base64url_encode(r->pool, nonce_bytes, SQRL_NONCE_BYTES);
+        sqrl_base64_encode(r->pool, nonce_bytes, SQRL_NONCE_BYTES);
 
     /* Increment the counter */
     ++sconf->counter;           /* TODO increment_and_get() */
@@ -146,7 +146,7 @@ sqrl_rec *sqrl_create(request_rec * r)
                                     nonce_bytes, sconf->nut_key);
 
     /* Encode the nut as base64 */
-    sqrl->nut64 = sqrl_base64url_encode(r->pool, nut_crypt, 16);
+    sqrl->nut64 = sqrl_base64_encode(r->pool, nut_crypt, 16U);
 
     /* Generate the url */
     if (additional && strlen(additional) > 1) {
@@ -234,7 +234,7 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl,
     apr_table_t *server_params;
     char *uri;
     unsigned char *nonce, *nut_bytes, *nut_crypt;
-    int nonce_len, nut_len;
+    size_t nonce_len, nut_len;
     apr_status_t rv;
 
     /* Load the server config for domain properties */
@@ -262,7 +262,7 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl,
         return SQRL_MISSING_SID;
     }
     /* Decode the nonce */
-    nonce = sqrl_base64url_decode(r->pool, sq->nonce, &nonce_len);
+    nonce = sqrl_base64_decode(r->pool, sq->nonce, &nonce_len);
     if (nonce_len != SQRL_NONCE_BYTES) {
         return SQRL_INVALID_SID;
     }
@@ -273,7 +273,7 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl,
         return SQRL_MISSING_NUT;
     }
     /* Decode the nut */
-    nut_bytes = sqrl_base64url_decode(r->pool, sq->nut64, &nut_len);
+    nut_bytes = sqrl_base64_decode(r->pool, sq->nut64, &nut_len);
     if (nut_len != 16) {
         return SQRL_INVALID_NUT;
     }
@@ -292,52 +292,7 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl,
     /* Set sqrl */
     *sqrl = sq;
 
-    if (1 == 1)
-        return APR_SUCCESS;
-
-    /* Initiate libapreq */
-//    apreq = apreq_handle_apache2(r);
-//
-//    /* Parse the body parameters */
-//    rv = apreq_body(apreq, &body);
-//    if (rv != APR_SUCCESS) {
-//        return rv;
-//    }
-//
-//    /* Decode client args */
-//    if (apr_table_get(body, "clientarg") == NULL) {
-//        return SQRL_MISSING_CLIENTARG;
-//    }
-//    clientarg = apr_pstrdup(r->pool, apr_table_get(body, "clientarg"));
-//    ssize = apreq_unescape(clientarg);
-//    if (ssize < 0) {
-//        return SQRL_INVALID_CLIENTARG;
-//    }
-//
-//    /* Decode server url */
-//    if (apr_table_get(body, "serverurl") == NULL) {
-//        return SQRL_MISSING_SERVERURL;
-//    }
-//    uri = apr_pstrdup(r->pool, apr_table_get(body, "serverurl"));
-//    ssize = apreq_unescape(uri);
-//    if (ssize < 0) {
-//        return SQRL_INVALID_SERVERURL;
-//    }
-//    sq->uri = uri;
-//
-//    /* Parse server parameters */
-//    /* Get the signature */
-//    sig64 = apr_table_get(body, "usrkeysig");
-//    if (!sig64) {
-//        return SQRL_MISSING_SIG;
-//    }
-//    /* Decode the signature */
-//    sq->sig = sqrl_base64url_decode(r->pool, sig64, &sq->sig_len);
-//    if (sq->sig_len < SQRL_SIGN_BYTES) {
-//        return SQRL_INVALID_SIG;
-//    }
-//
-//    return APR_SUCCESS;
+    return APR_SUCCESS;
 }
 
 apr_status_t sqrl_client_args_parse(request_rec * r,
@@ -349,7 +304,7 @@ apr_status_t sqrl_client_args_parse(request_rec * r,
     char *client_args;
     apr_table_t *client_params;
     const char *version, *options, *key64;
-    int key_len;
+    size_t key_len;
     apr_status_t rv;
     apr_ssize_t ssize;
 
@@ -391,7 +346,7 @@ apr_status_t sqrl_client_args_parse(request_rec * r,
         return SQRL_MISSING_KEY;
     }
     /* Decode the public key */
-    args->key = sqrl_base64url_decode(r->pool, key64, &key_len);
+    args->key = sqrl_base64_decode(r->pool, key64, &key_len);
     if (key_len != SQRL_PUBLIC_KEY_BYTES) {
         return SQRL_INVALID_KEY;
     }
@@ -410,7 +365,7 @@ apr_status_t sqrl_req_parse(request_rec * r, sqrl_req_rec ** sqrl_req)
     apreq_handle_t *apreq;
     const apr_table_t *body;
     char *serverurl;
-    int usr_sig_len, new_sig_len, iuk_sig_len;
+    size_t usr_sig_len, new_sig_len, iuk_sig_len;
     apr_status_t rv;
     apr_ssize_t ssize;
 
@@ -428,7 +383,6 @@ apr_status_t sqrl_req_parse(request_rec * r, sqrl_req_rec ** sqrl_req)
     if (req->raw_clientarg == NULL) {
         return SQRL_MISSING_CLIENTARG;
     }
-    //ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, req->raw_clientarg);
 
     /* Parse the client args */
     rv = sqrl_client_args_parse(r, &client_args, req->raw_clientarg);
@@ -467,7 +421,7 @@ apr_status_t sqrl_req_parse(request_rec * r, sqrl_req_rec ** sqrl_req)
 
     /* Decode the user's signature */
     req->usr_sig =
-        sqrl_base64url_decode(r->pool, req->raw_usrsig, &usr_sig_len);
+        sqrl_base64_decode(r->pool, req->raw_usrsig, &usr_sig_len);
     if (usr_sig_len < SQRL_SIGN_BYTES) {
         return SQRL_INVALID_SIG;
     }
@@ -477,7 +431,7 @@ apr_status_t sqrl_req_parse(request_rec * r, sqrl_req_rec ** sqrl_req)
     if (req->raw_newsig != NULL) {
         /* Decode the new signature */
         req->new_sig =
-            sqrl_base64url_decode(r->pool, req->raw_newsig, &new_sig_len);
+            sqrl_base64_decode(r->pool, req->raw_newsig, &new_sig_len);
         if (new_sig_len < SQRL_SIGN_BYTES) {
             return SQRL_INVALID_SIG;
         }
@@ -488,7 +442,7 @@ apr_status_t sqrl_req_parse(request_rec * r, sqrl_req_rec ** sqrl_req)
     if (req->raw_iuksig != NULL) {
         /* Decode the id unlock signature */
         req->iuk_sig =
-            sqrl_base64url_decode(r->pool, req->raw_iuksig, &iuk_sig_len);
+            sqrl_base64_decode(r->pool, req->raw_iuksig, &iuk_sig_len);
         if (iuk_sig_len < SQRL_SIGN_BYTES) {
             return SQRL_INVALID_SIG;
         }
@@ -660,7 +614,7 @@ static int sign_sqrl(request_rec * r)
                   private_hex);
 
     /* Encode the public key in base64 */
-    public64 = sqrl_base64url_encode(r->pool, public, SQRL_PUBLIC_KEY_BYTES);
+    public64 = sqrl_base64_encode(r->pool, public, SQRL_PUBLIC_KEY_BYTES);
 
     /* Complete the URL */
     url =
@@ -682,7 +636,7 @@ static int sign_sqrl(request_rec * r)
                   (unsigned long) signature_len);
 
     /* Encode the signature in base64 */
-    signature64 = sqrl_base64url_encode(r->pool, signature, SQRL_SIGN_BYTES);
+    signature64 = sqrl_base64_encode(r->pool, signature, SQRL_SIGN_BYTES);
 
     /* Build the response */
     response =

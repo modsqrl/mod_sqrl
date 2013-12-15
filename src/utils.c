@@ -35,71 +35,101 @@ char *get_client_ip(request_rec * r)
 #endif
 }
 
-char *sqrl_base64url_encode(apr_pool_t * p, const unsigned char *plain,
-                            unsigned int plain_len)
+char *sqrl_base64_encode(apr_pool_t * p, const uchar *plain,
+                          size_t plain_len)
 {
-    char *encoded;
-    char *i;
-    int base64_len;
+    char *b64, *b;
+    size_t i = plain_len / 3U, r = plain_len % 3U;
+    static char alpha[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" "0123456789-_";        // +/
 
-    /* Use apache to generate the standard base64 string */
-    encoded = apr_palloc(p, apr_base64_encode_len(plain_len) + 1);
-    base64_len = apr_base64_encode_binary(encoded, plain, plain_len);
-    encoded[base64_len] = '\0';
+    b64 = b = apr_palloc(p, 4U * i + 1);
 
-    /* Make the base64 string URL-safe */
-    i = encoded;
-    while (*i != '\0') {
-        switch (*i) {
-        case '+':
-            *i = '-';
-            break;
-        case '/':
-            *i = '_';
-            break;
-        case '=':
-            *i = '\0';
-            goto loop_end;
-            /* default: Valid character */
-        }
-        ++i;
+    while (i-- > 0) {
+        *b++ = alpha[plain[0] >> 2];
+        *b++ = alpha[((plain[0] & 0x03) << 4) | ((plain[1] & 0xf0) >> 4)];
+        *b++ = alpha[((plain[1] & 0x0f) << 2) | ((plain[2] & 0xc0) >> 6)];
+        *b++ = alpha[plain[2] & 0x3f];
+        plain += 3;
     }
-  loop_end:
+    switch (r) {
+    case 1:
+        *b++ = alpha[*plain >> 2];
+        *b++ = alpha[((*plain & 0x03) << 4)];
+        ++plain;
+        break;
+    case 2:
+        *b++ = alpha[*plain >> 2];
+        *b++ = alpha[((*plain & 0x03) << 4) | ((plain[1] & 0xf0) >> 4)];
+        *b++ = alpha[((plain[1] & 0x0f) << 2)];
+        ++plain;
+    }
+    *b = '\0';
 
-    return encoded;
+    return b64;
 }
 
-unsigned char *sqrl_base64url_decode(apr_pool_t * p, const char *encoded,
-                                     int *plain_len)
+uchar *sqrl_base64_decode(apr_pool_t * p, const char *b64,
+                                   size_t *plain_len)
 {
-    char *enc = apr_pstrdup(p, encoded);
-    unsigned char *plain = apr_palloc(p, strlen(encoded));
-    int len;
-    register char *i;
+    unsigned char *str, *s, *sb;
+    size_t b64_len = strlen(b64), i = b64_len / 4U, r = b64_len % 4U;
+    static const char nib[] = { 62, -1, -1, 52, 53, 54, 55, 56, 57, 58, 59,
+        60, 61, -1, -1, -1, -1, -1, -1, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+        11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, -1, -1,
+        -1, -1, 63, -1, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38,
+        39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51
+    };
+    static const char niblen = sizeof(nib);
 
-    /* Convert the URL-safe version back to normal */
-    i = enc;
-    while (*i != '\0') {
-        switch (*i) {
-        case '-':
-            *i = '+';
-            break;
-        case '_':
-            *i = '/';
-            break;
-            /* default: Valid character */
+    if(plain_len) {
+        *plain_len = 0;
+    }
+
+    str = s = apr_palloc(p, b64_len);
+
+    while (b64_len-- > 0) {
+        *s++ = (*b64++) - 45;
+    }
+
+#define invalid(i) (sb[i] < 0 || sb[i] > niblen)
+#define get(i) nib[sb[i]]
+
+    s = sb = str;
+    while (i-- > 0) {
+        if (invalid(0) || invalid(1) || invalid(2) || invalid(3)) {
+            return NULL;
         }
-        ++i;
+        *s++ = (get(0) << 2) | (get(1) >> 4);
+        *s++ = (get(1) << 4) | (get(2) >> 2);
+        *s++ = ((get(2) << 6) & 0xc0) | get(3);
+        sb += 4;
+    }
+    switch (r) {
+    case 1:
+        return NULL;
+        break;
+    case 2:
+        if (invalid(0) || invalid(1)) {
+            return NULL;
+        }
+        *s++ = (get(0) << 2) | (get(1) >> 4);
+        *s++ = (get(1) << 4);
+        break;
+    case 3:
+        if (invalid(0) || invalid(1) || invalid(2)) {
+            return NULL;
+        }
+        *s++ = (get(0) << 2) | (get(1) >> 4);
+        *s++ = (get(1) << 4) | (get(2) >> 2);
+        *s++ = ((get(2) << 6) & 0xc0);
+        break;
     }
 
-    /* Use apache to generate the standard base64 string */
-    len = apr_base64_decode_binary(plain, enc);
-
-    if (plain_len != NULL) {
-        *plain_len = len;
+    if(plain_len) {
+        *plain_len = s - str - 1;
     }
 
-    return plain;
+    return str;
 }
 
 char *bin2hex(apr_pool_t * p, const unsigned char *bin,
@@ -189,8 +219,8 @@ const char *sqrl_client_args_to_string(apr_pool_t * pool,
     char *options;
 
     options =
-        (args->
-         options ? apr_array_pstrcat(pool, args->options, ',') : "null");
+        (args->options ? apr_array_pstrcat(pool, args->options, ',') :
+         "null");
     /*if (args->key) {
        key = bin2hex(pool, args->key, SQRL_PUBLIC_KEY_BYTES, NULL);
        }
