@@ -200,20 +200,6 @@ static sqrl_nut_rec *sqrl_nut_parse(apr_pool_t * p,
     return sqrl_nut;
 }
 
-static apr_array_header_t *sqrl_options_parse(apr_pool_t * p,
-                                              const char *options)
-{
-    apr_array_header_t *array = apr_array_make(p, 0, sizeof(char *));
-    char *option, *last, *options0 = apr_pstrdup(p, options);
-
-    for (option = apr_strtok(options0, ",", &last);
-         option != NULL; option = apr_strtok(NULL, ",", &last)) {
-        APR_ARRAY_PUSH(array, char *) = option;
-    }
-
-    return array;
-}
-
 apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl,
                         const char *sqrl_uri)
 {
@@ -291,7 +277,7 @@ apr_status_t sqrl_client_parse(request_rec * r,
         apr_palloc(r->pool, sizeof(sqrl_client_rec));
     char *client;
     apr_table_t *client_params;
-    const char *version, *options, *key64;
+    const char *version, *key64;
     size_t dec_len;
 
     /* Decode the client args */
@@ -313,15 +299,6 @@ apr_status_t sqrl_client_parse(request_rec * r,
         return SQRL_INVALID_VER;
     }
     args->version = "1";
-
-    /* Get the options */
-    options = apr_table_get(client_params, "opt");
-    if (options) {
-        args->options = sqrl_options_parse(r->pool, options);
-    }
-    else {
-        args->options = apr_array_make(r->pool, 0, sizeof(char *));
-    }
 
     /* Get the public key */
     key64 = apr_table_get(client_params, "idk");
@@ -443,10 +420,8 @@ static int authenticate_sqrl(request_rec * r)
     sqrl_req_rec *sqrl_req;
     const sqrl_rec *sqrl;
     apr_status_t rv;
-    int verified, enforce;
+    int verified, ip_matches;
     apr_int32_t time_now;
-    const char *option;
-    const apr_array_header_t *options;
     apr_size_t ip_len;
     unsigned char *ip_buff, *ip_hash;
 
@@ -493,44 +468,27 @@ static int authenticate_sqrl(request_rec * r)
         return HTTP_BAD_REQUEST;
     }
 
-    /* Verify the IP address if it is enforced */
-    verified = enforce = 0;
-    options = sqrl_req->client->options;
-    if (options->nelts > 0) {
-        /* Search for the "enforce" option */
-        do {
-            option = APR_ARRAY_IDX(options, verified++, const char *);
-            if (strcmp("enforce", option) == 0) {
-                enforce = 1;
-            }
-        } while (verified < options->nelts);
+    /* Verify the IP address */
+    /* Build a salted IP */
+    ip_len = strlen(get_client_ip(r));
+    ip_buff = apr_palloc(r->pool, 12 + ip_len);
+    /* Add the current time */
+    int32_to_bytes(ip_buff, sqrl->nut->timestamp);
+    /* Add the counter */
+    int32_to_bytes((ip_buff + 4), sqrl->nut->counter);
+    /* Add a nonce */
+    memcpy((ip_buff + 8), sqrl->nut->nonce, 4);
+    /* Add the IP */
+    memcpy((ip_buff + 12), get_client_ip(r), ip_len);
 
-        /* If enforce  was found, verify the IP hash */
-        if (enforce) {
-            /* Build a salted IP */
-            ip_len = strlen(get_client_ip(r));
-            ip_buff = apr_palloc(r->pool, 12 + ip_len);
-            /* Add the current time */
-            int32_to_bytes(ip_buff, sqrl->nut->timestamp);
-            /* Add the counter */
-            int32_to_bytes((ip_buff + 4), sqrl->nut->counter);
-            /* Add a nonce */
-            memcpy((ip_buff + 8), sqrl->nut->nonce, 4);
-            /* Add the IP */
-            memcpy((ip_buff + 12), get_client_ip(r), ip_len);
+    /* Hash the salted IP and add to the nut struct */
+    ip_hash = apr_palloc(r->pool, crypto_hash_BYTES);
+    crypto_hash(ip_hash, ip_buff, (12 + ip_len));
 
-            /* Hash the salted IP and add to the nut struct */
-            ip_hash = apr_palloc(r->pool, crypto_hash_BYTES);
-            crypto_hash(ip_hash, ip_buff, (12 + ip_len));
-
-            /* Compare hash */
-            if (memcmp(sqrl->nut->ip_hash, ip_hash, 4) != 0) {
-                ap_log_rerror(APLOG_MARK, LOG_WARNING, SQRL_MISMATCH_IP, r,
-                              "Request's IP does not match the nut's IP");
-                return HTTP_BAD_REQUEST;
-            }
-        }
-    }
+    /* Compare hash */
+    ip_matches = memcmp(sqrl->nut->ip_hash, ip_hash, 4) == 0;
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "Request's IP %s the nut's IP",
+                  (ip_matches ? "matches" : "does not match"));
 
     /* Return a status message to the client */
     ap_set_content_type(r, "application/x-www-form-urlencoded");

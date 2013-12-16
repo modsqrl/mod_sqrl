@@ -284,15 +284,9 @@ const char *sqrl_to_string(apr_pool_t * pool, const sqrl_rec * sqrl)
 const char *sqrl_client_to_string(apr_pool_t * pool,
                                        const sqrl_client_rec * args)
 {
-    char *options;
-
-    options =
-        (args->options ? apr_array_pstrcat(pool, args->options, ',') :
-         "null");
-
     return apr_psprintf(pool,
-                        "sqrl_client_rec{version=%s,options=%s,key=%s}",
-                        ck_null(args->version), options,
+                        "sqrl_client_rec{version=%s,key=%s}",
+                        ck_null(args->version),
                         hex_or_null(pool, args->idk, SQRL_PUBLIC_KEY_BYTES));
 }
 

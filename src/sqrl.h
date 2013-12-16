@@ -74,7 +74,6 @@ typedef struct
 typedef struct
 {
     const char *version;
-    const apr_array_header_t *options;
     const unsigned char *idk;
     const unsigned char *pidk;
     const unsigned char *suk;
