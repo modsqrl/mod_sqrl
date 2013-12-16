@@ -37,9 +37,10 @@ limitations under the License.
 #define SQRL_INVALID_KEY 10
 #define SQRL_MISSING_SIG 11
 #define SQRL_INVALID_SIG 12
-#define SQRL_INVALID_VER 13
-#define SQRL_EXPIRED_NUT 14
-#define SQRL_MISMATCH_IP 15
+#define SQRL_MISSING_VER 13
+#define SQRL_INVALID_VER 14
+#define SQRL_EXPIRED_NUT 15
+#define SQRL_MISMATCH_IP 16
 
 #define SQRL_NONCE_BYTES crypto_stream_aes256estream_NONCEBYTES
 #define SQRL_ENCRYPTION_KEY_BYTES crypto_stream_aes256estream_KEYBYTES

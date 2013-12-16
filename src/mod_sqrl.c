@@ -306,10 +306,11 @@ apr_status_t sqrl_client_parse(request_rec * r,
 
     /* Get the version */
     version = apr_table_get(client_params, "ver");
-    if (version) {
-        if (strcmp("1", version) != 0) {
-            return SQRL_INVALID_VER;
-        }
+    if (version == NULL) {
+        return SQRL_MISSING_VER;
+    }
+    if (strcmp("1", version) != 0) {
+        return SQRL_INVALID_VER;
     }
     args->version = "1";
 
