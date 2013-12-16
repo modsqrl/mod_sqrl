@@ -30,6 +30,8 @@ typedef unsigned char uchar;
  */
 char *get_client_ip(request_rec * r);
 
+uchar *get_ip_hash(request_rec * r, const char *nonce);
+
 /*
  * Remove whitespace from the beginning and end of a string. The only change
  * to the supplied string is the resetting of the terminating '\0'.
@@ -55,7 +57,8 @@ apr_table_t *parse_parameters(apr_pool_t * p, char *params);
  * @param plain_len Number of bytes in plain to encode.
  * @return Base64url encoded string. Terminated by '\0'.
  */
-char *sqrl_base64_encode(apr_pool_t * p, const uchar *plain, size_t plain_len);
+char *sqrl_base64_encode(apr_pool_t * p, const uchar * plain,
+                         size_t plain_len);
 
 /*
  * Decode binary data from a URL-safe base64 string.
@@ -65,7 +68,8 @@ char *sqrl_base64_encode(apr_pool_t * p, const uchar *plain, size_t plain_len);
  * @param plain_len Number of bytes decoded. May be NULL.
  * @return The decoded plain data. '\0' does not terminate the data.
  */
-uchar *sqrl_base64_decode(apr_pool_t * p, const char *b64, size_t *plain_len);
+uchar *sqrl_base64_decode(apr_pool_t * p, const char *b64,
+                          size_t * plain_len);
 
 /*
  * Encode binary data to a hexadecimal string.
@@ -104,7 +108,7 @@ const char *sqrl_nut_to_string(apr_pool_t * pool, const sqrl_nut_rec * nut);
 const char *sqrl_to_string(apr_pool_t * pool, const sqrl_rec * sqrl);
 
 const char *sqrl_client_to_string(apr_pool_t * pool,
-                                       const sqrl_client_rec * args);
+                                  const sqrl_client_rec * args);
 
 const char *sqrl_req_to_string(apr_pool_t * pool, const sqrl_req_rec * req);
 

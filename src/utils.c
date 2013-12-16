@@ -37,27 +37,50 @@ char *get_client_ip(request_rec * r)
 #endif
 }
 
+uchar *get_ip_hash(request_rec * r, const char *nonce)
+{
+    char *ip;
+    size_t ip_len, nonce_len;
+    uchar *ip_buff, *ip_hash;
+
+    ip = get_client_ip(r);
+    ip_len = strlen(ip);
+    nonce_len = strlen(nonce);
+
+    ip_buff = apr_palloc(r->pool, ip_len + nonce_len);
+    /* Add the IP */
+    memcpy(ip_buff, ip, ip_len);
+    /* Add the nonce */
+    memcpy((ip_buff + ip_len), nonce, nonce_len);
+
+    /* Hash the salted IP and add to the nut struct */
+    ip_hash = apr_palloc(r->pool, SQRL_HASH_BYTES);
+    sqrl_hash(ip_hash, ip_buff, (ip_len + nonce_len));
+
+    return ip_hash;
+}
+
 char *trim(char *str)
 {
     register char *s = str;
 
-    if(str == NULL){
+    if (str == NULL) {
         return NULL;
     }
 
     /* Scan over the leading whitespace */
-    while(isspace(*s)) {
+    while (isspace(*s)) {
         ++s;
     }
     str = s;
 
     /* Scan to the end */
-    while(*s != '\0') {
+    while (*s != '\0') {
         ++s;
     }
 
     /* Scan over the trailing whitespace */
-    while(isspace(*(s-1))) {
+    while (isspace(*(s - 1))) {
         --s;
     }
     *s = '\0';
@@ -72,26 +95,26 @@ apr_table_t *parse_parameters(apr_pool_t * p, char *params)
     apr_table_t *param_table;
 
     /* Parse each line into an array */
-    param_array = apr_array_make(p, 3, sizeof(char*));
-    for (param = apr_strtok(params, "\r\n", &last) ;
-         param != NULL ; param = apr_strtok(NULL, "\r\n", &last)) {
-        APR_ARRAY_PUSH(param_array, char*) = param;
+    param_array = apr_array_make(p, 3, sizeof(char *));
+    for (param = apr_strtok(params, "\r\n", &last);
+         param != NULL; param = apr_strtok(NULL, "\r\n", &last)) {
+        APR_ARRAY_PUSH(param_array, char *) = param;
     }
 
     /* Parse each name=value into a table */
     param_table = apr_table_make(p, param_array->nelts);
-    while(param_array->nelts > 0) {
-        param = *(char**)apr_array_pop(param_array);
+    while (param_array->nelts > 0) {
+        param = *(char **) apr_array_pop(param_array);
         /* Get the parameter name */
         param = trim(apr_strtok(param, "=", &last));
         /* Skip it if it's empty */
-        if(*param == '\0') {
+        if (*param == '\0') {
             continue;
         }
         /* Get the parameter value */
         value = trim(apr_strtok(NULL, "\0", &last));
         /* If only the name was given, value will be null */
-        if(value == NULL) {
+        if (value == NULL) {
             apr_table_setn(param_table, param, "");
         }
         else {
@@ -102,8 +125,8 @@ apr_table_t *parse_parameters(apr_pool_t * p, char *params)
     return param_table;
 }
 
-char *sqrl_base64_encode(apr_pool_t * p, const uchar *plain,
-                          size_t plain_len)
+char *sqrl_base64_encode(apr_pool_t * p, const uchar * plain,
+                         size_t plain_len)
 {
     char *b64, *b;
     size_t i = plain_len / 3U, r = plain_len % 3U;
@@ -135,8 +158,7 @@ char *sqrl_base64_encode(apr_pool_t * p, const uchar *plain,
     return b64;
 }
 
-uchar *sqrl_base64_decode(apr_pool_t * p, const char *b64,
-                                   size_t *plain_len)
+uchar *sqrl_base64_decode(apr_pool_t * p, const char *b64, size_t * plain_len)
 {
     unsigned char *str, *s, *sb;
     size_t b64_len = strlen(b64), i = b64_len / 4U, r = b64_len % 4U;
@@ -148,7 +170,7 @@ uchar *sqrl_base64_decode(apr_pool_t * p, const char *b64,
     };
     static const char niblen = sizeof(nib);
 
-    if(plain_len) {
+    if (plain_len) {
         *plain_len = 0;
     }
 
@@ -193,7 +215,7 @@ uchar *sqrl_base64_decode(apr_pool_t * p, const char *b64,
     }
     *s = '\0';
 
-    if(plain_len) {
+    if (plain_len) {
         *plain_len = s - str - 1;
     }
 
@@ -282,7 +304,7 @@ const char *sqrl_to_string(apr_pool_t * pool, const sqrl_rec * sqrl)
 }
 
 const char *sqrl_client_to_string(apr_pool_t * pool,
-                                       const sqrl_client_rec * args)
+                                  const sqrl_client_rec * args)
 {
     return apr_psprintf(pool,
                         "sqrl_client_rec{version=%s,key=%s}",

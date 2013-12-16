@@ -33,8 +33,6 @@ limitations under the License.
 #include "apreq2/apreq_util.h"
 
 #include "sodium/core.h"
-#include "sodium/crypto_hash.h"
-#include "sodium/crypto_stream_aes256estream.h"
 #include "sodium/randombytes.h"
 #include "sodium/utils.h"
 #include "sodium/version.h"
@@ -70,8 +68,6 @@ sqrl_rec *sqrl_create(request_rec * r)
     const char *scheme, *domain, *realm, *path;
     sqrl_nut_rec *nut;
     unsigned char *nonce_bytes;
-    apr_size_t ip_len;
-    unsigned char *ip_buff;
     unsigned char *nut_buff;
     unsigned char *nut_crypt;
 
@@ -88,8 +84,7 @@ sqrl_rec *sqrl_create(request_rec * r)
     /* Log config */
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
                   "scheme = %s, domain = %s, realm = %s, path = %s",
-                  scheme, domain, (realm == NULL ? "null" : realm),
-                  path);
+                  scheme, domain, (realm == NULL ? "null" : realm), path);
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "nut_key = %s",
                   bin2hex(r->pool, sconf->nut_key, SQRL_ENCRYPTION_KEY_BYTES,
                           NULL));
@@ -103,8 +98,7 @@ sqrl_rec *sqrl_create(request_rec * r)
     randombytes(nonce_bytes, SQRL_NONCE_BYTES);
 
     /* Convert the nonce to base64 */
-    sqrl->nonce =
-        sqrl_base64_encode(r->pool, nonce_bytes, SQRL_NONCE_BYTES);
+    sqrl->nonce = sqrl_base64_encode(r->pool, nonce_bytes, SQRL_NONCE_BYTES);
 
     /* Increment the counter */
     ++sconf->counter;           /* TODO increment_and_get() */
@@ -115,35 +109,25 @@ sqrl_rec *sqrl_create(request_rec * r)
     nut->counter = sconf->counter;
     nut->nonce = apr_palloc(r->pool, 4);
     randombytes(nut->nonce, 4);
-
-    /* Build a salted IP */
-    ip_len = strlen(get_client_ip(r));
-    ip_buff = apr_palloc(r->pool, 12 + ip_len);
-    /* Add the current time */
-    int32_to_bytes(ip_buff, nut->timestamp);
-    /* Add the counter */
-    int32_to_bytes((ip_buff + 4), nut->counter);
-    /* Add a nonce */
-    memcpy((ip_buff + 8), nut->nonce, 4);
-    /* Add the IP */
-    memcpy((ip_buff + 12), get_client_ip(r), ip_len);
-
-    /* Hash the salted IP and add to the nut struct */
-    nut->ip_hash = apr_palloc(r->pool, crypto_hash_BYTES);
-    crypto_hash(nut->ip_hash, ip_buff, (12 + ip_len));
-
-    /* Build the authentication URL's nut */
-    nut_buff = apr_palloc(r->pool, 16);
-    memcpy(nut_buff, ip_buff, 12);
-    memcpy((nut_buff + 12), nut->ip_hash, 4);
+    nut->ip_hash = get_ip_hash(r, sqrl->nonce);
 
     /* Set nut */
     sqrl->nut = nut;
 
+    /* Build the authentication URL's nut */
+    nut_buff = apr_palloc(r->pool, 16);
+    /* Add the current time */
+    int32_to_bytes(nut_buff, nut->timestamp);
+    /* Add the counter */
+    int32_to_bytes((nut_buff + 4), nut->counter);
+    /* Add a nonce */
+    memcpy((nut_buff + 8), nut->nonce, 4);
+    /* Add the IP */
+    memcpy((nut_buff + 12), nut->ip_hash, 4);
+
     /* Encrypt the nut */
     nut_crypt = apr_palloc(r->pool, 16);
-    crypto_stream_aes256estream_xor(nut_crypt, nut_buff, 16U,
-                                    nonce_bytes, sconf->nut_key);
+    sqrl_crypto_stream(nut_crypt, nut_buff, 16U, nonce_bytes, sconf->nut_key);
 
     /* Encode the nut as base64 */
     sqrl->nut64 = sqrl_base64_encode(r->pool, nut_crypt, 16U);
@@ -254,8 +238,7 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl,
 
     /* Decrypt the nut */
     nut_crypt = apr_palloc(r->pool, 16);
-    crypto_stream_aes256estream_xor(nut_crypt, nut_bytes, 16U,
-                                    nonce, sconf->nut_key);
+    sqrl_crypto_stream(nut_crypt, nut_bytes, 16U, nonce, sconf->nut_key);
 
     /* Parse the nut */
     sq->nut = sqrl_nut_parse(r->pool, nut_crypt);
@@ -270,19 +253,18 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl,
 }
 
 apr_status_t sqrl_client_parse(request_rec * r,
-                                    sqrl_client_rec ** sqrl_client,
-                                    const char *raw_client)
+                               sqrl_client_rec ** sqrl_client,
+                               const char *raw_client)
 {
-    sqrl_client_rec *args =
-        apr_palloc(r->pool, sizeof(sqrl_client_rec));
+    sqrl_client_rec *args = apr_palloc(r->pool, sizeof(sqrl_client_rec));
     char *client;
     apr_table_t *client_params;
     const char *version, *key64;
     size_t dec_len;
 
     /* Decode the client args */
-    client = (char*)sqrl_base64_decode(r->pool, raw_client, &dec_len);
-    if(client == NULL) {
+    client = (char *) sqrl_base64_decode(r->pool, raw_client, &dec_len);
+    if (client == NULL) {
         return SQRL_INVALID_CLIENT;
     }
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "client = %s", client);
@@ -357,8 +339,8 @@ apr_status_t sqrl_req_parse(request_rec * r, sqrl_req_rec ** sqrl_req)
     }
 
     /* Decode the server's uri */
-    server = (char*)sqrl_base64_decode(r->pool, req->raw_server, NULL);
-    if(server == NULL) {
+    server = (char *) sqrl_base64_decode(r->pool, req->raw_server, NULL);
+    if (server == NULL) {
         return SQRL_INVALID_SERVER;
     }
     req->server = server;
@@ -387,8 +369,7 @@ apr_status_t sqrl_req_parse(request_rec * r, sqrl_req_rec ** sqrl_req)
     req->raw_pids = apr_table_get(body, "pids");
     if (req->raw_pids != NULL) {
         /* Decode the new signature */
-        req->pids =
-            sqrl_base64_decode(r->pool, req->raw_pids, &dec_len);
+        req->pids = sqrl_base64_decode(r->pool, req->raw_pids, &dec_len);
         if (dec_len < SQRL_SIGN_BYTES) {
             return SQRL_INVALID_SIG;
         }
@@ -422,8 +403,7 @@ static int authenticate_sqrl(request_rec * r)
     apr_status_t rv;
     int verified, ip_matches;
     apr_int32_t time_now;
-    apr_size_t ip_len;
-    unsigned char *ip_buff, *ip_hash;
+    unsigned char *ip_hash;
 
     dconf = ap_get_module_config(r->per_dir_config, &sqrl_module);
 
@@ -469,23 +449,7 @@ static int authenticate_sqrl(request_rec * r)
     }
 
     /* Verify the IP address */
-    /* Build a salted IP */
-    ip_len = strlen(get_client_ip(r));
-    ip_buff = apr_palloc(r->pool, 12 + ip_len);
-    /* Add the current time */
-    int32_to_bytes(ip_buff, sqrl->nut->timestamp);
-    /* Add the counter */
-    int32_to_bytes((ip_buff + 4), sqrl->nut->counter);
-    /* Add a nonce */
-    memcpy((ip_buff + 8), sqrl->nut->nonce, 4);
-    /* Add the IP */
-    memcpy((ip_buff + 12), get_client_ip(r), ip_len);
-
-    /* Hash the salted IP and add to the nut struct */
-    ip_hash = apr_palloc(r->pool, crypto_hash_BYTES);
-    crypto_hash(ip_hash, ip_buff, (12 + ip_len));
-
-    /* Compare hash */
+    ip_hash = get_ip_hash(r, sqrl->nonce);
     ip_matches = memcmp(sqrl->nut->ip_hash, ip_hash, 4) == 0;
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "Request's IP %s the nut's IP",
                   (ip_matches ? "matches" : "does not match"));
@@ -810,11 +774,10 @@ static const char *cfg_set_key(cmd_parms * parms, void *mconfig,
 }
 
 static const char *cfg_set_realm(cmd_parms * parms, void *mconfig,
-                                      const char *w)
+                                 const char *w)
 {
     sqrl_dir_cfg *conf = (sqrl_dir_cfg *) mconfig;
-    conf->realm =
-        (*w == '/' ? w : apr_pstrcat(parms->pool, "/", w, NULL));
+    conf->realm = (*w == '/' ? w : apr_pstrcat(parms->pool, "/", w, NULL));
     return NULL;
 }
 
