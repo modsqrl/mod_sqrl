@@ -167,25 +167,22 @@ sqrl_rec *sqrl_create(request_rec * r)
 
 int sqrl_verify(apr_pool_t * p, const sqrl_req_rec * sqrl_req)
 {
-    size_t arg_len = strlen(sqrl_req->raw_clientarg);
-    size_t url_len = strlen(sqrl_req->raw_serverurl);
-    unsigned long long sig_len = SQRL_SIGN_BYTES + arg_len + url_len, msg_len;
+    size_t client_len = strlen(sqrl_req->raw_client);
+    size_t server_len = strlen(sqrl_req->raw_server);
+    unsigned long long sig_len = SQRL_SIGN_BYTES + client_len + server_len;
+    unsigned long long msg_len;
     unsigned char *sig = apr_palloc(p, sig_len);
     unsigned char *msg = apr_palloc(p, sig_len);
-    int verified;
 
     /* Build signature */
-    memcpy(sig, sqrl_req->usr_sig, SQRL_SIGN_BYTES);
-    memcpy((sig + SQRL_SIGN_BYTES), sqrl_req->raw_clientarg, arg_len);
-    memcpy((sig + SQRL_SIGN_BYTES + arg_len), sqrl_req->raw_serverurl,
-           url_len);
+    memcpy(sig, sqrl_req->ids, SQRL_SIGN_BYTES);
+    memcpy((sig + SQRL_SIGN_BYTES), sqrl_req->raw_client, client_len);
+    memcpy((sig + SQRL_SIGN_BYTES + client_len), sqrl_req->raw_server,
+           server_len);
 
     /* Verify signature */
-    verified =
-        sqrl_crypto_sign_open(msg, &msg_len, sig, sig_len,
-                              sqrl_req->client_args->key);
-
-    return verified;
+    return sqrl_crypto_sign_open(msg, &msg_len, sig, sig_len,
+                                 sqrl_req->client->idk);
 }
 
 static sqrl_nut_rec *sqrl_nut_parse(apr_pool_t * p,
@@ -237,14 +234,14 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl,
     /* Find the uri's query string */
     uri = strchr(sqrl_uri, '?');
     if (uri == NULL || *(++uri) == '\0') {
-        return SQRL_INVALID_SERVERURL;
+        return SQRL_INVALID_SERVER;
     }
 
     /* Parse the query string */
     server_params = apr_table_make(r->pool, 2);
     rv = apreq_parse_query_string(r->pool, server_params, uri);
     if (apreq_module_status_is_error(rv)) {
-        return SQRL_INVALID_SERVERURL;
+        return SQRL_INVALID_SERVER;
     }
 
     /* Get the nonce */
@@ -286,26 +283,26 @@ apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl,
     return APR_SUCCESS;
 }
 
-apr_status_t sqrl_client_args_parse(request_rec * r,
-                                    sqrl_client_args_rec ** sqrl_client_args,
-                                    const char *raw_clientarg)
+apr_status_t sqrl_client_parse(request_rec * r,
+                                    sqrl_client_rec ** sqrl_client,
+                                    const char *raw_client)
 {
-    sqrl_client_args_rec *args =
-        apr_palloc(r->pool, sizeof(sqrl_client_args_rec));
-    char *client_args;
+    sqrl_client_rec *args =
+        apr_palloc(r->pool, sizeof(sqrl_client_rec));
+    char *client;
     apr_table_t *client_params;
     const char *version, *options, *key64;
     size_t dec_len;
 
     /* Decode the client args */
-    client_args = (char*)sqrl_base64_decode(r->pool, raw_clientarg, &dec_len);
-    if(client_args == NULL) {
-        return SQRL_INVALID_CLIENTARG;
+    client = (char*)sqrl_base64_decode(r->pool, raw_client, &dec_len);
+    if(client == NULL) {
+        return SQRL_INVALID_CLIENT;
     }
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "client_args = %s", client_args);
+    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "client = %s", client);
 
     /* Parse client parameters */
-    client_params = parse_parameters(r->pool, client_args);
+    client_params = parse_parameters(r->pool, client);
 
     /* Get the version */
     version = apr_table_get(client_params, "ver");
@@ -326,18 +323,18 @@ apr_status_t sqrl_client_args_parse(request_rec * r,
     }
 
     /* Get the public key */
-    key64 = apr_table_get(client_params, "usrkey");
+    key64 = apr_table_get(client_params, "idk");
     if (!key64) {
         return SQRL_MISSING_KEY;
     }
     /* Decode the public key */
-    args->key = sqrl_base64_decode(r->pool, key64, &dec_len);
+    args->idk = sqrl_base64_decode(r->pool, key64, &dec_len);
     if (dec_len != SQRL_PUBLIC_KEY_BYTES) {
         return SQRL_INVALID_KEY;
     }
 
-    /* Set sqrl_client_args */
-    *sqrl_client_args = args;
+    /* Set sqrl_client */
+    *sqrl_client = args;
 
     return APR_SUCCESS;
 }
@@ -346,10 +343,10 @@ apr_status_t sqrl_req_parse(request_rec * r, sqrl_req_rec ** sqrl_req)
 {
     sqrl_req_rec *req = apr_palloc(r->pool, sizeof(sqrl_req_rec));
     sqrl_rec *sqrl;
-    sqrl_client_args_rec *client_args;
+    sqrl_client_rec *client;
     apreq_handle_t *apreq;
     const apr_table_t *body;
-    char *serverurl;
+    char *server;
     size_t dec_len;
     apr_status_t rv;
 
@@ -363,33 +360,33 @@ apr_status_t sqrl_req_parse(request_rec * r, sqrl_req_rec ** sqrl_req)
     }
 
     /* Get the client args */
-    req->raw_clientarg = apr_table_get(body, "clientarg");
-    if (req->raw_clientarg == NULL) {
-        return SQRL_MISSING_CLIENTARG;
+    req->raw_client = apr_table_get(body, "client");
+    if (req->raw_client == NULL) {
+        return SQRL_MISSING_CLIENT;
     }
 
     /* Parse the client args */
-    rv = sqrl_client_args_parse(r, &client_args, req->raw_clientarg);
+    rv = sqrl_client_parse(r, &client, req->raw_client);
     if (rv != APR_SUCCESS) {
         return rv;
     }
-    req->client_args = client_args;
+    req->client = client;
 
     /* Get the server's uri */
-    req->raw_serverurl = apr_table_get(body, "serverurl");
-    if (req->raw_serverurl == NULL) {
-        return SQRL_MISSING_SERVERURL;
+    req->raw_server = apr_table_get(body, "server");
+    if (req->raw_server == NULL) {
+        return SQRL_MISSING_SERVER;
     }
 
     /* Decode the server's uri */
-    serverurl = (char*)sqrl_base64_decode(r->pool, req->raw_serverurl, NULL);
-    if(serverurl == NULL) {
-        return SQRL_INVALID_SERVERURL;
+    server = (char*)sqrl_base64_decode(r->pool, req->raw_server, NULL);
+    if(server == NULL) {
+        return SQRL_INVALID_SERVER;
     }
-    req->server_uri = serverurl;
+    req->server = server;
 
     /* Parse the server's uri */
-    rv = sqrl_parse(r, &sqrl, req->server_uri);
+    rv = sqrl_parse(r, &sqrl, req->server);
     if (rv != APR_SUCCESS) {
         return rv;
     }
@@ -397,35 +394,33 @@ apr_status_t sqrl_req_parse(request_rec * r, sqrl_req_rec ** sqrl_req)
     //ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, sqrl_to_string(r->pool, sqrl));
 
     /* Get the user's signature */
-    req->raw_usrsig = apr_table_get(body, "usrkeysig");
-    if (req->raw_usrsig == NULL) {
+    req->raw_ids = apr_table_get(body, "ids");
+    if (req->raw_ids == NULL) {
         return SQRL_MISSING_SIG;
     }
 
     /* Decode the user's signature */
-    req->usr_sig =
-        sqrl_base64_decode(r->pool, req->raw_usrsig, &dec_len);
+    req->ids = sqrl_base64_decode(r->pool, req->raw_ids, &dec_len);
     if (dec_len < SQRL_SIGN_BYTES) {
         return SQRL_INVALID_SIG;
     }
 
-    /* Get the new signature */
-    req->raw_newsig = apr_table_get(body, "newkeysig");
-    if (req->raw_newsig != NULL) {
+    /* Get the previous signature */
+    req->raw_pids = apr_table_get(body, "pids");
+    if (req->raw_pids != NULL) {
         /* Decode the new signature */
-        req->new_sig =
-            sqrl_base64_decode(r->pool, req->raw_newsig, &dec_len);
+        req->pids =
+            sqrl_base64_decode(r->pool, req->raw_pids, &dec_len);
         if (dec_len < SQRL_SIGN_BYTES) {
             return SQRL_INVALID_SIG;
         }
     }
 
-    /* Get the id unlock signature */
-    req->raw_iuksig = apr_table_get(body, "iukkeysig");
-    if (req->raw_iuksig != NULL) {
+    /* Get the unlock signature */
+    req->raw_urs = apr_table_get(body, "urs");
+    if (req->raw_urs != NULL) {
         /* Decode the id unlock signature */
-        req->iuk_sig =
-            sqrl_base64_decode(r->pool, req->raw_iuksig, &dec_len);
+        req->urs = sqrl_base64_decode(r->pool, req->raw_urs, &dec_len);
         if (dec_len < SQRL_SIGN_BYTES) {
             return SQRL_INVALID_SIG;
         }
@@ -499,7 +494,7 @@ static int authenticate_sqrl(request_rec * r)
 
     /* Verify the IP address if it is enforced */
     verified = enforce = 0;
-    options = sqrl_req->client_args->options;
+    options = sqrl_req->client->options;
     if (options->nelts > 0) {
         /* Search for the "enforce" option */
         do {

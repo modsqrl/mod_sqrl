@@ -181,7 +181,7 @@
 			keyPair = nacl.crypto_sign_keypair_from_seed(privat);
 			public64 = toAsciiUrl(keyPair.signPk);
 
-			var clientarg = "ver  =  1  \r\n abc \n opt=  enforce  \n  \r\n  usrkey  = " + public64 + "\r\n \n \r\n";
+			var clientarg = "ver=1\ncmd=login\nidk=" + public64 + "\n";
 			log.args = clientarg;
 			clientarg = sqrlBtoa(clientarg);
 
@@ -199,9 +199,9 @@
 			}
 			log.authUrl = url;
 
-			var post = "clientarg=" + clientarg + "&" +
-						"serverurl=" + uri64 + "&" +
-						"usrkeysig=" + sig64;
+			var post = "client=" + clientarg + "&" +
+						"server=" + uri64 + "&" +
+						"ids=" + sig64;
 			log.post = post;
 
 			sendAuthentication(url, post, log);

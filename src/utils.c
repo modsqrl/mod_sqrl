@@ -281,8 +281,8 @@ const char *sqrl_to_string(apr_pool_t * pool, const sqrl_rec * sqrl)
                         str_or_null(sqrl->nut64), ck_null(sqrl->nonce));
 }
 
-const char *sqrl_client_args_to_string(apr_pool_t * pool,
-                                       const sqrl_client_args_rec * args)
+const char *sqrl_client_to_string(apr_pool_t * pool,
+                                       const sqrl_client_rec * args)
 {
     char *options;
 
@@ -291,20 +291,20 @@ const char *sqrl_client_args_to_string(apr_pool_t * pool,
          "null");
 
     return apr_psprintf(pool,
-                        "sqrl_client_args_rec{version=%s,options=%s,key=%s}",
+                        "sqrl_client_rec{version=%s,options=%s,key=%s}",
                         ck_null(args->version), options,
-                        hex_or_null(pool, args->key, SQRL_PUBLIC_KEY_BYTES));
+                        hex_or_null(pool, args->idk, SQRL_PUBLIC_KEY_BYTES));
 }
 
 const char *sqrl_req_to_string(apr_pool_t * pool, const sqrl_req_rec * req)
 {
-    const char *client_args, *sqrl;
+    const char *client, *sqrl;
 
-    if (req->client_args) {
-        client_args = sqrl_client_args_to_string(pool, req->client_args);
+    if (req->client) {
+        client = sqrl_client_to_string(pool, req->client);
     }
     else {
-        client_args = "null";
+        client = "null";
     }
     if (req->sqrl) {
         sqrl = sqrl_to_string(pool, req->sqrl);
@@ -314,16 +314,16 @@ const char *sqrl_req_to_string(apr_pool_t * pool, const sqrl_req_rec * req)
     }
 
     return apr_psprintf(pool,
-                        "sqrl_req_rec{raw_clientarg=%s,client_args=%s,"
-                        "raw_serverurl=%s,server_uri=%s,sqrl=%s,"
-                        "raw_usrsig=%s,usr_sig=%s}",
-                        str_or_null(req->raw_clientarg),
-                        client_args,
-                        str_or_null(req->raw_serverurl),
-                        str_or_null(req->server_uri),
+                        "sqrl_req_rec{raw_client=%s,client=%s,"
+                        "raw_server=%s,server=%s,sqrl=%s,"
+                        "raw_ids=%s,ids=%s}",
+                        str_or_null(req->raw_client),
+                        client,
+                        str_or_null(req->raw_server),
+                        str_or_null(req->server),
                         sqrl,
-                        str_or_null(req->raw_usrsig),
-                        hex_or_null(pool, req->usr_sig, SQRL_SIGN_BYTES));
+                        str_or_null(req->raw_ids),
+                        hex_or_null(pool, req->ids, SQRL_SIGN_BYTES));
 }
 
 apr_status_t write_out(request_rec * r, const char *response)

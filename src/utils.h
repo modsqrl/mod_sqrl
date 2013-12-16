@@ -103,8 +103,8 @@ const char *sqrl_nut_to_string(apr_pool_t * pool, const sqrl_nut_rec * nut);
  */
 const char *sqrl_to_string(apr_pool_t * pool, const sqrl_rec * sqrl);
 
-const char *sqrl_client_args_to_string(apr_pool_t * pool,
-                                       const sqrl_client_args_rec * args);
+const char *sqrl_client_to_string(apr_pool_t * pool,
+                                       const sqrl_client_rec * args);
 
 const char *sqrl_req_to_string(apr_pool_t * pool, const sqrl_req_rec * req);
 

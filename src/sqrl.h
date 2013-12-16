@@ -25,10 +25,10 @@ limitations under the License.
 
 
 #define SQRL_OK 0
-#define SQRL_MISSING_CLIENTARG 1
-#define SQRL_INVALID_CLIENTARG 2
-#define SQRL_MISSING_SERVERURL 3
-#define SQRL_INVALID_SERVERURL 4
+#define SQRL_MISSING_CLIENT 1
+#define SQRL_INVALID_CLIENT 2
+#define SQRL_MISSING_SERVER 3
+#define SQRL_INVALID_SERVER 4
 #define SQRL_MISSING_NUT 5
 #define SQRL_INVALID_NUT 6
 #define SQRL_MISSING_SID 7
@@ -74,22 +74,25 @@ typedef struct
 {
     const char *version;
     const apr_array_header_t *options;
-    const unsigned char *key;
-} sqrl_client_args_rec;
+    const unsigned char *idk;
+    const unsigned char *pidk;
+    const unsigned char *suk;
+    const unsigned char *vuk;
+} sqrl_client_rec;
 
 typedef struct
 {
-    const char *raw_clientarg;
-    const sqrl_client_args_rec *client_args;
-    const char *raw_serverurl;
-    const char *server_uri;
+    const char *raw_client;
+    const sqrl_client_rec *client;
+    const char *raw_server;
+    const char *server;
     const sqrl_rec *sqrl;
-    const char *raw_usrsig;
-    const unsigned char *usr_sig;
-    const char *raw_newsig;
-    const unsigned char *new_sig;
-    const char *raw_iuksig;
-    const unsigned char *iuk_sig;
+    const char *raw_ids;
+    const unsigned char *ids;
+    const char *raw_pids;
+    const unsigned char *pids;
+    const char *raw_urs;
+    const unsigned char *urs;
 } sqrl_req_rec;
 
 
