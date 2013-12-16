@@ -64,8 +64,8 @@ These are all optional.
 | SqrlTls            | boolean    | off     | When set to "on", the Authentication-URL will have a "sqrl://" scheme which the client will convert to "https://" for the authentication request. When set to "off", the Authentication-URL will have a "qrl://" scheme which the client will convert to "http://" for the authentication request. Set to "on" if mod\_ssl is loaded and configured. |
 | SqrlDomain         | string     | The hostname used by the client in the request | The domain part of the Authentication-URL. If www.example.com is serving the website but sqrl.example.com handles authentication, SqrlDomain would be set to sqrl.example.com. |
 | SqrlEncryptionKey  | hex string | Randomly generated when the server starts | 32-byte encryption key used to encrypt the nut. Set this if you are concerned with encountering the situation where an unlucky client requests an Authentication-URL, the server is restarted, then the client submits its identity but the server fails to decrypt the nut and rejects the identity. |
-| SqrlDomainAddition | string     | null    | Part of the URL's path that should be included with the domain when the client calculates its keys. If you have multiple apps running under the same domain, they can have separate authentications by putting the application's name here. Example: "app\_name" would render the Authentication-URL "sqrl://www.example.com/app_name &#x7c;sqrl?nut=1234567890123456&sid=6543210987654321". SqrlDomainAddition/SqrlPath must match the &lt;Location> that sets the "sqrl" handler. |
-| SqrlPath           | string     | sqrl    | Part of the URL's path (after any domain-addition) that maps to the SQRL authentication handler. SqrlDomainAddition/SqrlPath must match the &lt;Location> that sets the "sqrl" handler. |
+| SqrlRealm | string     | null    | Part of the URL's path that should be included with the domain when the client calculates its keys. If you have multiple apps running under the same domain, they can have separate authentications by putting the application's name here. Example: "app\_name" would render the Authentication-URL "sqrl://www.example.com/app_name &#x7c;sqrl?nut=1234567890123456&sid=6543210987654321". SqrlRealm/SqrlPath must match the &lt;Location> that sets the "sqrl" handler. |
+| SqrlPath           | string     | sqrl    | Part of the URL's path (after the realm) that maps to the SQRL authentication handler. SqrlRealm/SqrlPath must match the &lt;Location> that sets the "sqrl" handler. |
 
 Example:
 ```
@@ -88,7 +88,7 @@ SSLEngine on
 SqrlTls on
 SqrlDomain sqrl.example.com
 SqrlEncryptionKey abcdef0123456789987654321fedcbaabcdef0123456789987654321fedcbaab
-SqrlDomainAddition /myapp
+SqrlRealm /myapp
 SqrlPath /sqrlauth
 
 # Authentication-URLs look like: sqrl://sqrl.example.com/myapp|sqrlauth?nut=0123456789abcdef&sid=fedcba9876543210

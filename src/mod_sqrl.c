@@ -52,7 +52,7 @@ typedef struct
 
 typedef struct
 {
-    const char *additional, *path;
+    const char *realm, *path;
 } sqrl_dir_cfg;
 
 module AP_MODULE_DECLARE_DATA sqrl_module;
@@ -67,7 +67,7 @@ sqrl_rec *sqrl_create(request_rec * r)
     sqrl_rec *sqrl;
     sqrl_svr_cfg *sconf;
     sqrl_dir_cfg *dconf;
-    const char *scheme, *domain, *additional, *path;
+    const char *scheme, *domain, *realm, *path;
     sqrl_nut_rec *nut;
     unsigned char *nonce_bytes;
     apr_size_t ip_len;
@@ -82,13 +82,13 @@ sqrl_rec *sqrl_create(request_rec * r)
 
     /* Load the directory config to get the URL properties */
     dconf = ap_get_module_config(r->per_dir_config, &sqrl_module);
-    additional = dconf->additional;
+    realm = dconf->realm;
     path = dconf->path;
 
     /* Log config */
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
-                  "scheme = %s, domain = %s, additional = %s, path = %s",
-                  scheme, domain, (additional == NULL ? "null" : additional),
+                  "scheme = %s, domain = %s, realm = %s, path = %s",
+                  scheme, domain, (realm == NULL ? "null" : realm),
                   path);
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "nut_key = %s",
                   bin2hex(r->pool, sconf->nut_key, SQRL_ENCRYPTION_KEY_BYTES,
@@ -149,9 +149,9 @@ sqrl_rec *sqrl_create(request_rec * r)
     sqrl->nut64 = sqrl_base64_encode(r->pool, nut_crypt, 16U);
 
     /* Generate the url */
-    if (additional && strlen(additional) > 1) {
+    if (realm && strlen(realm) > 1) {
         sqrl->uri =
-            apr_pstrcat(r->pool, scheme, "://", domain, additional, "|", path,
+            apr_pstrcat(r->pool, scheme, "://", domain, realm, "|", path,
                         "?nut=", sqrl->nut64, "&n=", sqrl->nonce, NULL);
     }
     else {
@@ -735,7 +735,7 @@ static void *create_server_config(apr_pool_t * p, server_rec * s)
 static void *create_dir_config(apr_pool_t * p, char *dir)
 {
     sqrl_dir_cfg *conf = apr_palloc(p, sizeof(sqrl_dir_cfg));
-    conf->additional = UNSET;
+    conf->realm = UNSET;
     conf->path = "sqrl";
     return conf;
 }
@@ -809,11 +809,11 @@ static const char *cfg_set_key(cmd_parms * parms, void *mconfig,
     return NULL;
 }
 
-static const char *cfg_set_additional(cmd_parms * parms, void *mconfig,
+static const char *cfg_set_realm(cmd_parms * parms, void *mconfig,
                                       const char *w)
 {
     sqrl_dir_cfg *conf = (sqrl_dir_cfg *) mconfig;
-    conf->additional =
+    conf->realm =
         (*w == '/' ? w : apr_pstrcat(parms->pool, "/", w, NULL));
     return NULL;
 }
@@ -833,7 +833,7 @@ static const command_rec configuration_cmds[] = {
                   "Authenticate to this domain"),
     AP_INIT_TAKE1("SqrlEncryptionKey", cfg_set_key, NULL, RSRC_CONF,
                   "16-byte encryption key for encrypting the nut"),
-    AP_INIT_TAKE1("SqrlDomainAddition", cfg_set_additional, NULL,
+    AP_INIT_TAKE1("SqrlRealm", cfg_set_realm, NULL,
                   ACCESS_CONF | RSRC_CONF,
                   "Path to include as part of the domain in the "
                   "Authentication-URL"),
