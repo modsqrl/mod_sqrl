@@ -66,6 +66,7 @@ These are all optional.
 | SqrlEncryptionKey  | hex string | Randomly generated when the server starts | 32-byte encryption key used to encrypt the nut. Set this if you are concerned with encountering the situation where an unlucky client requests an Authentication-URL, the server is restarted, then the client submits its identity but the server fails to decrypt the nut and rejects the identity. |
 | SqrlRealm | string     | null    | Part of the URL's path that should be included with the domain when the client calculates its keys. If you have multiple apps running under the same domain, they can have separate authentications by putting the application's name here. Example: "app\_name" would render the Authentication-URL "sqrl://www.example.com/app_name &#x7c;sqrl?nut=1234567890123456&sid=6543210987654321". SqrlRealm/SqrlPath must match the &lt;Location> that sets the "sqrl" handler. |
 | SqrlPath           | string     | sqrl    | Part of the URL's path (after the realm) that maps to the SQRL authentication handler. SqrlRealm/SqrlPath must match the &lt;Location> that sets the "sqrl" handler. |
+| SqrlTimeout        | int        | 120     | Number of seconds for which the SQRL code is valid. A value of 0 or less disables the timeout. |
 
 Example:
 ```

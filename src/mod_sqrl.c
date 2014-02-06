@@ -51,6 +51,7 @@ typedef struct
 typedef struct
 {
     const char *realm, *path;
+    int timeout;
 } sqrl_dir_cfg;
 
 module AP_MODULE_DECLARE_DATA sqrl_module;
@@ -440,12 +441,14 @@ static int authenticate_sqrl(request_rec * r)
 
     sqrl = sqrl_req->sqrl;
 
-    /* Verify the time, timeout is 2 minutes */
-    time_now = apr_time_sec(apr_time_now());
-    if (time_now > (sqrl->nut->timestamp + 120)) {
-        ap_log_rerror(APLOG_MARK, LOG_WARNING, SQRL_EXPIRED_NUT, r,
-                      "Nut has expired");
-        return HTTP_BAD_REQUEST;
+    /* Verify the timeout */
+    if(dconf->timeout > 0) {
+        time_now = apr_time_sec(apr_time_now());
+        if (time_now > (sqrl->nut->timestamp + dconf->timeout)) {
+            ap_log_rerror(APLOG_MARK, LOG_WARNING, SQRL_EXPIRED_NUT, r,
+                          "Nut has expired");
+            return HTTP_BAD_REQUEST;
+        }
     }
 
     /* Verify the IP address */
@@ -701,6 +704,7 @@ static void *create_dir_config(apr_pool_t * p, char *dir)
     sqrl_dir_cfg *conf = apr_palloc(p, sizeof(sqrl_dir_cfg));
     conf->realm = UNSET;
     conf->path = "sqrl";
+    conf->timeout = 120;        /* 2 minutes */
     return conf;
 }
 
@@ -802,6 +806,10 @@ static const command_rec configuration_cmds[] = {
                   "Authentication-URL"),
     AP_INIT_TAKE1("SqrlPath", cfg_set_path, NULL, ACCESS_CONF | RSRC_CONF,
                   "Path to authentication service"),
+    AP_INIT_TAKE1("SqrlTimeout", ap_set_int_slot,
+                  (void *) APR_OFFSETOF(sqrl_dir_cfg, timeout),
+                  ACCESS_CONF | RSRC_CONF,
+                  "Sqrl code is valid for this many seconds."),
     {NULL}
 };
 
