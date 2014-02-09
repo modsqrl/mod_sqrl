@@ -1,13 +1,20 @@
 
-BASEDIR=/usr/local/apache24
+BASEDIR=/usr/local/apache22
 
 AP_INC=${BASEDIR}/bin/apxs -q APR_INCLUDEDIR
 APR_INC=$(BASEDIR/bin/apxs -q INCLUDEDIR)
 INCLUDE=-I$(BASEDIR)/include -I/usr/local/include
 LIBRARY=-L$(BASEDIR)/lib -lapr-1 -laprutil-1 -lsodium
 CFLAGS=-g -Wall -O0 $(INCLUDE) $(LIBRARY)
+CXXFLAGS=$(CFLAGS)
+
+.PHONY: all test
 
 all: base64
 
 base64: base64.c
+
+test: sqrl_encodings_test.o
+	$(CXX) $(CXXFLAGS) sqrl_encodings_test.o -o test
+	LD_LIBRARY_PATH=/usr/local/lib ./test
 
