@@ -14,16 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#include "httpd.h"
+#ifndef SQRL_H
+#define SQRL_H
+
+
 #include "apr_tables.h"
 #include "sodium/crypto_hash.h"
 #include "sodium/crypto_sign_ed25519.h"
 #include "sodium/crypto_stream_aes256estream.h"
-
-
-#ifndef SQRL_H
-#define SQRL_H
-
 
 #define SQRL_OK 0
 #define SQRL_MISSING_CLIENT 1
@@ -60,6 +58,19 @@ limitations under the License.
         crypto_sign_ed25519_open(m, mlen, sm, smlen, pk)
 #define sqrl_hash(out, in, inlen)\
         crypto_hash(out, in, inlen)
+
+typedef struct
+{
+    const char *scheme, *domain;
+    const unsigned char *nut_key;
+    apr_int32_t counter;
+} sqrl_svr_cfg;
+
+typedef struct
+{
+    const char *realm, *path;
+    int timeout;
+} sqrl_dir_cfg;
 
 typedef struct
 {
@@ -102,10 +113,11 @@ typedef struct
 } sqrl_req_rec;
 
 
-sqrl_rec *sqrl_create(request_rec * r);
+sqrl_rec *sqrl_create(apr_pool_t *pool, sqrl_svr_cfg *sconf, sqrl_dir_cfg *dconf, char *ip);
 
-apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl,
-                        const char *sqrl_uri);
+apr_status_t sqrl_parse(apr_pool_t *pool, sqrl_rec ** sqrl, sqrl_svr_cfg *sconf, const char *sqrl_uri);
+
+apr_status_t sqrl_req_parse(apr_pool_t *pool, sqrl_req_rec ** sqrl_req, sqrl_svr_cfg *sconf, const apr_table_t *body);
 
 int sqrl_verify(apr_pool_t * pool, const sqrl_req_rec * sqrl_req);
 

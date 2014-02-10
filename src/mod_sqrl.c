@@ -38,357 +38,33 @@ limitations under the License.
 #include "sodium/version.h"
 
 #include "sqrl.h"
+#include "sqrl_encodings.h"
 #include "utils.h"
 
-
-typedef struct
-{
-    const char *scheme, *domain;
-    const unsigned char *nut_key;
-    apr_int32_t counter;
-} sqrl_svr_cfg;
-
-typedef struct
-{
-    const char *realm, *path;
-    int timeout;
-} sqrl_dir_cfg;
 
 module AP_MODULE_DECLARE_DATA sqrl_module;
 
 
-/*
- * SQRL functions
- */
-
-sqrl_rec *sqrl_create(request_rec * r)
+char *get_client_ip(request_rec * r)
 {
-    sqrl_rec *sqrl;
-    sqrl_svr_cfg *sconf;
-    sqrl_dir_cfg *dconf;
-    const char *scheme, *domain, *realm, *path;
-    sqrl_nut_rec *nut;
-    unsigned char *nonce_bytes;
-    unsigned char *nut_buff;
-    unsigned char *nut_crypt;
-
-    /* Load the server config to get the counter */
-    sconf = ap_get_module_config(r->server->module_config, &sqrl_module);
-    scheme = sconf->scheme;
-    domain = sconf->domain;
-
-    /* Load the directory config to get the URL properties */
-    dconf = ap_get_module_config(r->per_dir_config, &sqrl_module);
-    realm = dconf->realm;
-    path = dconf->path;
-
-    /* Log config */
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
-                  "scheme = %s, domain = %s, realm = %s, path = %s",
-                  scheme, domain, (realm == NULL ? "null" : realm), path);
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "nut_key = %s",
-                  bin2hex(r->pool, sconf->nut_key, SQRL_ENCRYPTION_KEY_BYTES,
-                          NULL));
-
-    /* Allocate the sqrl struct */
-    sqrl = apr_palloc(r->pool, sizeof(sqrl_rec));
-
-    /* Generate a nonce */
-    nonce_bytes = apr_palloc(r->pool, SQRL_NONCE_BYTES);
-    /* libsodium PRNG */
-    randombytes(nonce_bytes, SQRL_NONCE_BYTES);
-
-    /* Convert the nonce to base64 */
-    sqrl->nonce = sqrl_base64_encode(r->pool, nonce_bytes, SQRL_NONCE_BYTES);
-
-    /* Increment the counter */
-    ++sconf->counter;           /* TODO increment_and_get() */
-
-    /* Build the nut struct */
-    nut = apr_palloc(r->pool, sizeof(sqrl_nut_rec));
-    nut->timestamp = apr_time_sec(apr_time_now());
-    nut->counter = sconf->counter;
-    nut->nonce = apr_palloc(r->pool, 4);
-    randombytes(nut->nonce, 4);
-    nut->ip_hash = get_ip_hash(r, sqrl->nonce);
-
-    /* Set nut */
-    sqrl->nut = nut;
-
-    /* Build the authentication URL's nut */
-    nut_buff = apr_palloc(r->pool, 16);
-    /* Add the current time */
-    int32_to_bytes(nut_buff, nut->timestamp);
-    /* Add the counter */
-    int32_to_bytes((nut_buff + 4), nut->counter);
-    /* Add a nonce */
-    memcpy((nut_buff + 8), nut->nonce, 4);
-    /* Add the IP */
-    memcpy((nut_buff + 12), nut->ip_hash, 4);
-
-    /* Encrypt the nut */
-    nut_crypt = apr_palloc(r->pool, 16);
-    sqrl_crypto_stream(nut_crypt, nut_buff, 16U, nonce_bytes, sconf->nut_key);
-
-    /* Encode the nut as base64 */
-    sqrl->nut64 = sqrl_base64_encode(r->pool, nut_crypt, 16U);
-
-    /* Generate the url */
-    if (realm && strlen(realm) > 1) {
-        sqrl->uri =
-            apr_pstrcat(r->pool, scheme, "://", domain, realm, "|", path,
-                        "?nut=", sqrl->nut64, "&n=", sqrl->nonce, NULL);
-    }
-    else {
-        sqrl->uri =
-            apr_pstrcat(r->pool, scheme, "://", domain, "/", path, "?nut=",
-                        sqrl->nut64, "&n=", sqrl->nonce, NULL);
-    }
-
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, sqrl_to_string(r->pool, sqrl));
-
-    return sqrl;
+#if AP_MODULE_MAGIC_AT_LEAST(20080403,1)
+    return r->useragent_ip;
+#else
+    return r->connection->remote_ip;
+#endif
 }
 
-int sqrl_verify(apr_pool_t * p, const sqrl_req_rec * sqrl_req)
+apr_status_t write_out(request_rec * r, const char *response)
 {
-    size_t client_len = strlen(sqrl_req->raw_client);
-    size_t server_len = strlen(sqrl_req->raw_server);
-    unsigned long long sig_len = SQRL_SIGN_BYTES + client_len + server_len;
-    unsigned long long msg_len;
-    unsigned char *sig = apr_palloc(p, sig_len);
-    unsigned char *msg = apr_palloc(p, sig_len);
+    apr_bucket_brigade *bb;
+    apr_bucket *b;
 
-    /* Build signature */
-    memcpy(sig, sqrl_req->ids, SQRL_SIGN_BYTES);
-    memcpy((sig + SQRL_SIGN_BYTES), sqrl_req->raw_client, client_len);
-    memcpy((sig + SQRL_SIGN_BYTES + client_len), sqrl_req->raw_server,
-           server_len);
-
-    /* Verify signature */
-    return sqrl_crypto_sign_open(msg, &msg_len, sig, sig_len,
-                                 sqrl_req->client->idk);
-}
-
-static sqrl_nut_rec *sqrl_nut_parse(apr_pool_t * p,
-                                    const unsigned char *nut_bytes)
-{
-    sqrl_nut_rec *sqrl_nut = apr_palloc(p, sizeof(sqrl_nut_rec));
-
-    sqrl_nut->timestamp = bytes_to_int32(nut_bytes);
-    sqrl_nut->counter = bytes_to_int32(nut_bytes + 4);
-    sqrl_nut->nonce = apr_palloc(p, 4);
-    memcpy(sqrl_nut->nonce, (nut_bytes + 8), 4);
-    sqrl_nut->ip_hash = apr_palloc(p, 4);
-    memcpy(sqrl_nut->ip_hash, (nut_bytes + 12), 4);
-
-    return sqrl_nut;
-}
-
-apr_status_t sqrl_parse(request_rec * r, sqrl_rec ** sqrl,
-                        const char *sqrl_uri)
-{
-    sqrl_rec *sq = apr_palloc(r->pool, sizeof(sqrl_rec));
-    sqrl_svr_cfg *sconf;
-    apr_table_t *server_params;
-    char *uri;
-    unsigned char *nonce, *nut_bytes, *nut_crypt;
-    size_t dec_len;
-    apr_status_t rv;
-
-    /* Load the server config for domain properties */
-    sconf = ap_get_module_config(r->server->module_config, &sqrl_module);
-
-    /* Copy the uri into the sqrl struct */
-    sq->uri = apr_pstrdup(r->pool, sqrl_uri);
-
-    /* Find the uri's query string */
-    uri = strchr(sqrl_uri, '?');
-    if (uri == NULL || *(++uri) == '\0') {
-        return SQRL_INVALID_SERVER;
-    }
-
-    /* Parse the query string */
-    server_params = apr_table_make(r->pool, 2);
-    rv = apreq_parse_query_string(r->pool, server_params, uri);
-    if (apreq_module_status_is_error(rv)) {
-        return SQRL_INVALID_SERVER;
-    }
-
-    /* Get the nonce */
-    sq->nonce = apr_table_get(server_params, "n");
-    if (!sq->nonce) {
-        return SQRL_MISSING_SID;
-    }
-    /* Decode the nonce */
-    nonce = sqrl_base64_decode(r->pool, sq->nonce, &dec_len);
-    if (dec_len != SQRL_NONCE_BYTES) {
-        return SQRL_INVALID_SID;
-    }
-
-    /* Get the nut */
-    sq->nut64 = apr_table_get(server_params, "nut");
-    if (!sq->nut64) {
-        return SQRL_MISSING_NUT;
-    }
-    /* Decode the nut */
-    nut_bytes = sqrl_base64_decode(r->pool, sq->nut64, &dec_len);
-    if (dec_len != 16) {
-        return SQRL_INVALID_NUT;
-    }
-
-    /* Decrypt the nut */
-    nut_crypt = apr_palloc(r->pool, 16);
-    sqrl_crypto_stream(nut_crypt, nut_bytes, 16U, nonce, sconf->nut_key);
-
-    /* Parse the nut */
-    sq->nut = sqrl_nut_parse(r->pool, nut_crypt);
-    if (!sq->nut) {
-        return SQRL_INVALID_NUT;
-    }
-
-    /* Set sqrl */
-    *sqrl = sq;
-
-    return APR_SUCCESS;
-}
-
-apr_status_t sqrl_client_parse(request_rec * r,
-                               sqrl_client_rec ** sqrl_client,
-                               const char *raw_client)
-{
-    sqrl_client_rec *args = apr_palloc(r->pool, sizeof(sqrl_client_rec));
-    char *client;
-    apr_table_t *client_params;
-    const char *version, *key64;
-    size_t dec_len;
-
-    /* Decode the client args */
-    client = (char *) sqrl_base64_decode(r->pool, raw_client, &dec_len);
-    if (client == NULL) {
-        return SQRL_INVALID_CLIENT;
-    }
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "client = %s", client);
-
-    /* Parse client parameters */
-    client_params = parse_parameters(r->pool, client);
-
-    /* Get the version */
-    version = apr_table_get(client_params, "ver");
-    if (version == NULL) {
-        return SQRL_MISSING_VER;
-    }
-    if (strcmp("1", version) != 0) {
-        return SQRL_INVALID_VER;
-    }
-    args->version = "1";
-
-    /* Get the public key */
-    key64 = apr_table_get(client_params, "idk");
-    if (!key64) {
-        return SQRL_MISSING_KEY;
-    }
-    /* Decode the public key */
-    args->idk = sqrl_base64_decode(r->pool, key64, &dec_len);
-    if (dec_len != SQRL_PUBLIC_KEY_BYTES) {
-        return SQRL_INVALID_KEY;
-    }
-
-    /* Set sqrl_client */
-    *sqrl_client = args;
-
-    return APR_SUCCESS;
-}
-
-apr_status_t sqrl_req_parse(request_rec * r, sqrl_req_rec ** sqrl_req)
-{
-    sqrl_req_rec *req = apr_palloc(r->pool, sizeof(sqrl_req_rec));
-    sqrl_rec *sqrl;
-    sqrl_client_rec *client;
-    apreq_handle_t *apreq;
-    const apr_table_t *body;
-    char *server;
-    size_t dec_len;
-    apr_status_t rv;
-
-    /* Initiate libapreq */
-    apreq = apreq_handle_apache2(r);
-
-    /* Parse the body parameters */
-    rv = apreq_body(apreq, &body);
-    if (apreq_module_status_is_error(rv)) {
-        return rv;
-    }
-
-    /* Get the client args */
-    req->raw_client = apr_table_get(body, "client");
-    if (req->raw_client == NULL) {
-        return SQRL_MISSING_CLIENT;
-    }
-
-    /* Parse the client args */
-    rv = sqrl_client_parse(r, &client, req->raw_client);
-    if (rv != APR_SUCCESS) {
-        return rv;
-    }
-    req->client = client;
-
-    /* Get the server's uri */
-    req->raw_server = apr_table_get(body, "server");
-    if (req->raw_server == NULL) {
-        return SQRL_MISSING_SERVER;
-    }
-
-    /* Decode the server's uri */
-    server = (char *) sqrl_base64_decode(r->pool, req->raw_server, NULL);
-    if (server == NULL) {
-        return SQRL_INVALID_SERVER;
-    }
-    req->server = server;
-
-    /* Parse the server's uri */
-    rv = sqrl_parse(r, &sqrl, req->server);
-    if (rv != APR_SUCCESS) {
-        return rv;
-    }
-    req->sqrl = sqrl;
-    //ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, sqrl_to_string(r->pool, sqrl));
-
-    /* Get the user's signature */
-    req->raw_ids = apr_table_get(body, "ids");
-    if (req->raw_ids == NULL) {
-        return SQRL_MISSING_SIG;
-    }
-
-    /* Decode the user's signature */
-    req->ids = sqrl_base64_decode(r->pool, req->raw_ids, &dec_len);
-    if (dec_len < SQRL_SIGN_BYTES) {
-        return SQRL_INVALID_SIG;
-    }
-
-    /* Get the previous signature */
-    req->raw_pids = apr_table_get(body, "pids");
-    if (req->raw_pids != NULL) {
-        /* Decode the new signature */
-        req->pids = sqrl_base64_decode(r->pool, req->raw_pids, &dec_len);
-        if (dec_len < SQRL_SIGN_BYTES) {
-            return SQRL_INVALID_SIG;
-        }
-    }
-
-    /* Get the unlock signature */
-    req->raw_urs = apr_table_get(body, "urs");
-    if (req->raw_urs != NULL) {
-        /* Decode the id unlock signature */
-        req->urs = sqrl_base64_decode(r->pool, req->raw_urs, &dec_len);
-        if (dec_len < SQRL_SIGN_BYTES) {
-            return SQRL_INVALID_SIG;
-        }
-    }
-
-    *sqrl_req = req;
-
-    return APR_SUCCESS;
+    bb = apr_brigade_create(r->pool, r->connection->bucket_alloc);
+    b = apr_bucket_immortal_create(response, strlen(response),
+                                   bb->bucket_alloc);
+    APR_BRIGADE_INSERT_TAIL(bb, b);
+    APR_BRIGADE_INSERT_TAIL(bb, apr_bucket_eos_create(bb->bucket_alloc));
+    return ap_pass_brigade(r->output_filters, bb);
 }
 
 
@@ -398,6 +74,7 @@ apr_status_t sqrl_req_parse(request_rec * r, sqrl_req_rec ** sqrl_req)
 
 static int authenticate_sqrl(request_rec * r)
 {
+    sqrl_svr_cfg *sconf;
     sqrl_dir_cfg *dconf;
     sqrl_req_rec *sqrl_req;
     const sqrl_rec *sqrl;
@@ -405,8 +82,8 @@ static int authenticate_sqrl(request_rec * r)
     int verified, ip_matches;
     apr_int32_t time_now;
     unsigned char *ip_hash;
-
-    dconf = ap_get_module_config(r->per_dir_config, &sqrl_module);
+    apreq_handle_t *apreq;
+    const apr_table_t *body;
 
     if (!r->handler || (strcmp(r->handler, "sqrl") != 0)) {
         return DECLINED;
@@ -418,8 +95,20 @@ static int authenticate_sqrl(request_rec * r)
 
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "Verifying SQRL code ...");
 
+    sconf = ap_get_module_config(r->server->module_config, &sqrl_module);
+    dconf = ap_get_module_config(r->per_dir_config, &sqrl_module);
+
+    /* Initiate libapreq */
+    apreq = apreq_handle_apache2(r);
+
+    /* Parse the body parameters */
+    rv = apreq_body(apreq, &body);
+    if (apreq_module_status_is_error(rv)) {
+        return rv;
+    }
+
     /* Parse the sqrl request */
-    rv = sqrl_req_parse(r, &sqrl_req);
+    rv = sqrl_req_parse(r->pool, &sqrl_req, sconf, body);
     if (rv != APR_SUCCESS) {
         ap_log_rerror(APLOG_MARK, LOG_WARNING, rv, r,
                       "Error parsing the authentication request");
@@ -452,7 +141,7 @@ static int authenticate_sqrl(request_rec * r)
     }
 
     /* Verify the IP address */
-    ip_hash = get_ip_hash(r, sqrl->nonce);
+    ip_hash = get_ip_hash(r->pool, get_client_ip(r), sqrl->nonce);
     ip_matches = memcmp(sqrl->nut->ip_hash, ip_hash, 4) == 0;
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "Request's IP %s the nut's IP",
                   (ip_matches ? "matches" : "does not match"));
@@ -488,8 +177,9 @@ static int sign_sqrl(request_rec * r)
     }
     url_len = end - url;
     url = apr_pstrndup(r->pool, url, url_len);
-    rv = ap_unescape_urlencoded(url);
-    if (rv) {
+    rv = apreq_unescape(url);
+    //rv = ap_unescape_urlencoded(url);
+    if (rv < 0) {
         ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r,
                       "Error interpreting the given url: %s", url);
         return HTTP_INTERNAL_SERVER_ERROR;
@@ -576,6 +266,8 @@ static APR_OPTIONAL_FN_TYPE(ap_ssi_get_tag_and_value) *
      static apr_status_t handle_sqrl_gen(include_ctx_t * ctx, ap_filter_t * f,
                                          apr_bucket_brigade * bb)
 {
+    sqrl_svr_cfg *sconf;
+    sqrl_dir_cfg *dconf;
     request_rec *r = f->r;
     request_rec *mr = r->main;
     apr_pool_t *p = r->pool;
@@ -588,6 +280,9 @@ static APR_OPTIONAL_FN_TYPE(ap_ssi_get_tag_and_value) *
         p = mr->pool;
         mr = mr->main;
     }
+
+    sconf = ap_get_module_config(r->server->module_config, &sqrl_module);
+    dconf = ap_get_module_config(r->per_dir_config, &sqrl_module);
 
     /* Loop over directive arguments */
     while (1) {
@@ -617,7 +312,7 @@ static APR_OPTIONAL_FN_TYPE(ap_ssi_get_tag_and_value) *
 
     /* Only generate a sqrl if it's actually going to be used */
     if (url || id) {
-        sqrl = sqrl_create(r);
+        sqrl = sqrl_create(r->pool, sconf, dconf, get_client_ip(r));
         if (!sqrl) {
             SSI_CREATE_ERROR_BUCKET(ctx, f, bb);
             return APR_SUCCESS;

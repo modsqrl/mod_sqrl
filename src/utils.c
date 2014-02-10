@@ -25,36 +25,28 @@ limitations under the License.
 #include "sodium/utils.h"
 
 #include "sqrl.h"
+#include "sqrl_encodings.h"
 #include "utils.h"
 
 
-char *get_client_ip(request_rec * r)
+unsigned char *get_ip_hash(apr_pool_t *p, char *ip, const char *nonce)
 {
-#if AP_MODULE_MAGIC_AT_LEAST(20080403,1)
-    return r->useragent_ip;
-#else
-    return r->connection->remote_ip;
-#endif
-}
-
-uchar *get_ip_hash(request_rec * r, const char *nonce)
-{
-    char *ip;
+    //char *ip;
     size_t ip_len, nonce_len;
     uchar *ip_buff, *ip_hash;
 
-    ip = get_client_ip(r);
+    //ip = get_client_ip(r);
     ip_len = strlen(ip);
     nonce_len = strlen(nonce);
 
-    ip_buff = apr_palloc(r->pool, ip_len + nonce_len);
+    ip_buff = apr_palloc(p, ip_len + nonce_len);
     /* Add the IP */
     memcpy(ip_buff, ip, ip_len);
     /* Add the nonce */
     memcpy((ip_buff + ip_len), nonce, nonce_len);
 
     /* Hash the salted IP and add to the nut struct */
-    ip_hash = apr_palloc(r->pool, SQRL_HASH_BYTES);
+    ip_hash = apr_palloc(p, SQRL_HASH_BYTES);
     sqrl_hash(ip_hash, ip_buff, (ip_len + nonce_len));
 
     return ip_hash;
@@ -125,7 +117,7 @@ apr_table_t *parse_parameters(apr_pool_t * p, char *params)
     return param_table;
 }
 
-char *sqrl_base64_encode(apr_pool_t * p, const uchar * plain,
+/*char *sqrl_base64_encode(apr_pool_t * p, const uchar * plain,
                          size_t plain_len)
 {
     char *b64, *b;
@@ -250,7 +242,7 @@ void int32_to_bytes(unsigned char bytes[4], apr_int32_t integer)
     *(bytes + 1) = integer >> 16 & 0xff;
     *(bytes + 2) = integer >> 8 & 0xff;
     *(bytes + 3) = integer >> 0 & 0xff;
-}
+}*/
 
 #define str_or_null(str) (str ? str : "null")
 #define hex_or_null(pool, data, sz) \
@@ -342,15 +334,4 @@ const char *sqrl_req_to_string(apr_pool_t * pool, const sqrl_req_rec * req)
                         hex_or_null(pool, req->ids, SQRL_SIGN_BYTES));
 }
 
-apr_status_t write_out(request_rec * r, const char *response)
-{
-    apr_bucket_brigade *bb;
-    apr_bucket *b;
 
-    bb = apr_brigade_create(r->pool, r->connection->bucket_alloc);
-    b = apr_bucket_immortal_create(response, strlen(response),
-                                   bb->bucket_alloc);
-    APR_BRIGADE_INSERT_TAIL(bb, b);
-    APR_BRIGADE_INSERT_TAIL(bb, apr_bucket_eos_create(bb->bucket_alloc));
-    return ap_pass_brigade(r->output_filters, bb);
-}

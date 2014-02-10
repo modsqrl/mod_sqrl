@@ -24,13 +24,7 @@ limitations under the License.
 typedef unsigned char uchar;
 
 
-/*
- * Get the clients IP address.
- * @param r Request.
- */
-char *get_client_ip(request_rec * r);
-
-uchar *get_ip_hash(request_rec * r, const char *nonce);
+uchar *get_ip_hash(apr_pool_t *p, char *ip, const char *nonce);
 
 /*
  * Remove whitespace from the beginning and end of a string. The only change
@@ -57,8 +51,8 @@ apr_table_t *parse_parameters(apr_pool_t * p, char *params);
  * @param plain_len Number of bytes in plain to encode.
  * @return Base64url encoded string. Terminated by '\0'.
  */
-char *sqrl_base64_encode(apr_pool_t * p, const uchar * plain,
-                         size_t plain_len);
+//char *sqrl_base64_encode(apr_pool_t * p, const uchar * plain,
+//                         size_t plain_len);
 
 /*
  * Decode binary data from a URL-safe base64 string.
@@ -68,8 +62,8 @@ char *sqrl_base64_encode(apr_pool_t * p, const uchar * plain,
  * @param plain_len Number of bytes decoded. May be NULL.
  * @return The decoded plain data. '\0' does not terminate the data.
  */
-uchar *sqrl_base64_decode(apr_pool_t * p, const char *b64,
-                          size_t * plain_len);
+//uchar *sqrl_base64_decode(apr_pool_t * p, const char *b64,
+//                          size_t * plain_len);
 
 /*
  * Encode binary data to a hexadecimal string.
@@ -80,22 +74,22 @@ uchar *sqrl_base64_decode(apr_pool_t * p, const char *b64,
  *               NULL pointer.
  * @return Hexidecimal string. Terminated by '\0'.
  */
-char *bin2hex(apr_pool_t * p, const unsigned char *bin,
-              const apr_size_t binlen, apr_size_t * hexlen);
+//char *bin2hex(apr_pool_t * p, const unsigned char *bin,
+//              const apr_size_t binlen, apr_size_t * hexlen);
 
 /*
  * Convert 4 bytes to a 32-bit integer.
  * @param bytes An array of, at least, 4 bytes.
  * @return A 32-bit integer.
  */
-apr_int32_t bytes_to_int32(const unsigned char bytes[4]);
+//apr_int32_t bytes_to_int32(const unsigned char bytes[4]);
 
 /*
  * Convert a 32-bit integer to 4 bytes.
  * @param bytes An array of, at least, 4 bytes to store the integer.
  * @param integer The integer to be broken up into 4 bytes.
  */
-void int32_to_bytes(unsigned char bytes[4], apr_int32_t integer);
+//void int32_to_bytes(unsigned char bytes[4], apr_int32_t integer);
 
 const char *sqrl_nut_to_string(apr_pool_t * pool, const sqrl_nut_rec * nut);
 
@@ -111,8 +105,6 @@ const char *sqrl_client_to_string(apr_pool_t * pool,
                                   const sqrl_client_rec * args);
 
 const char *sqrl_req_to_string(apr_pool_t * pool, const sqrl_req_rec * req);
-
-apr_status_t write_out(request_rec * r, const char *response);
 
 
 #endif
