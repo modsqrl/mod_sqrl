@@ -27,7 +27,7 @@ limitations under the License.
  * @param plain_len Number of bytes in plain to encode.
  * @return Base64url encoded string. Terminated by '\0'.
  */
-char *sqrl_base64_encode(apr_pool_t * p, const unsigned char * plain,
+char *sqrl_base64_encode(apr_pool_t * p, const unsigned char *plain,
                          size_t plain_len);
 
 /*
@@ -39,7 +39,7 @@ char *sqrl_base64_encode(apr_pool_t * p, const unsigned char * plain,
  * @return The decoded plain data. '\0' does not terminate the data.
  */
 unsigned char *sqrl_base64_decode(apr_pool_t * p, const char *b64,
-                          size_t * plain_len);
+                                  size_t * plain_len);
 
 /*
  * Encode binary data to a hexadecimal string.
@@ -69,4 +69,3 @@ void int32_to_bytes(unsigned char bytes[4], apr_int32_t integer);
 
 
 #endif
-

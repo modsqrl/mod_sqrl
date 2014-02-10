@@ -112,7 +112,7 @@ apr_table_t *parse_parameters(apr_pool_t * p, char *params)
     return param_table;
 }
 
-unsigned char *get_ip_hash(apr_pool_t *p, const char *ip, const char *nonce)
+unsigned char *get_ip_hash(apr_pool_t * p, const char *ip, const char *nonce)
 {
     size_t ip_len, nonce_len;
     unsigned char *ip_buff, *ip_hash;
@@ -133,7 +133,8 @@ unsigned char *get_ip_hash(apr_pool_t *p, const char *ip, const char *nonce)
     return ip_hash;
 }
 
-sqrl_rec *sqrl_create(apr_pool_t *pool, sqrl_svr_cfg *sconf, sqrl_dir_cfg *dconf, char *ip)
+sqrl_rec *sqrl_create(apr_pool_t * pool, sqrl_svr_cfg * sconf,
+                      sqrl_dir_cfg * dconf, char *ip)
 {
     sqrl_rec *sqrl;
     const char *scheme, *domain, *realm, *path;
@@ -148,12 +149,12 @@ sqrl_rec *sqrl_create(apr_pool_t *pool, sqrl_svr_cfg *sconf, sqrl_dir_cfg *dconf
     path = dconf->path;
 
     /* Log config
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
-                  "scheme = %s, domain = %s, realm = %s, path = %s",
-                  scheme, domain, (realm == NULL ? "null" : realm), path);
-    ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "nut_key = %s",
-                  bin2hex(r->pool, sconf->nut_key, SQRL_ENCRYPTION_KEY_BYTES,
-                          NULL)); */
+       ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
+       "scheme = %s, domain = %s, realm = %s, path = %s",
+       scheme, domain, (realm == NULL ? "null" : realm), path);
+       ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r, "nut_key = %s",
+       bin2hex(r->pool, sconf->nut_key, SQRL_ENCRYPTION_KEY_BYTES,
+       NULL)); */
 
     /* Allocate the sqrl struct */
     sqrl = apr_palloc(pool, sizeof(sqrl_rec));
@@ -215,7 +216,7 @@ sqrl_rec *sqrl_create(apr_pool_t *pool, sqrl_svr_cfg *sconf, sqrl_dir_cfg *dconf
     return sqrl;
 }
 
-int sqrl_verify(apr_pool_t *pool, const sqrl_req_rec * sqrl_req)
+int sqrl_verify(apr_pool_t * pool, const sqrl_req_rec * sqrl_req)
 {
     size_t client_len = strlen(sqrl_req->raw_client);
     size_t server_len = strlen(sqrl_req->raw_server);
@@ -235,7 +236,7 @@ int sqrl_verify(apr_pool_t *pool, const sqrl_req_rec * sqrl_req)
                                  sqrl_req->client->idk);
 }
 
-static sqrl_nut_rec *sqrl_nut_parse(apr_pool_t *pool,
+static sqrl_nut_rec *sqrl_nut_parse(apr_pool_t * pool,
                                     const unsigned char *nut_bytes)
 {
     sqrl_nut_rec *sqrl_nut = apr_palloc(pool, sizeof(sqrl_nut_rec));
@@ -250,8 +251,8 @@ static sqrl_nut_rec *sqrl_nut_parse(apr_pool_t *pool,
     return sqrl_nut;
 }
 
-apr_status_t sqrl_parse(apr_pool_t *pool, sqrl_rec ** sqrl, sqrl_svr_cfg *sconf,
-                        const char *sqrl_uri)
+apr_status_t sqrl_parse(apr_pool_t * pool, sqrl_rec ** sqrl,
+                        sqrl_svr_cfg * sconf, const char *sqrl_uri)
 {
     sqrl_rec *sq = apr_palloc(pool, sizeof(sqrl_rec));
     apr_table_t *server_params;
@@ -314,7 +315,7 @@ apr_status_t sqrl_parse(apr_pool_t *pool, sqrl_rec ** sqrl, sqrl_svr_cfg *sconf,
     return APR_SUCCESS;
 }
 
-apr_status_t sqrl_client_parse(apr_pool_t *pool,
+apr_status_t sqrl_client_parse(apr_pool_t * pool,
                                sqrl_client_rec ** sqrl_client,
                                const char *raw_client)
 {
@@ -361,7 +362,8 @@ apr_status_t sqrl_client_parse(apr_pool_t *pool,
     return APR_SUCCESS;
 }
 
-apr_status_t sqrl_req_parse(apr_pool_t *pool, sqrl_req_rec ** sqrl_req, sqrl_svr_cfg *sconf, const apr_table_t *body)
+apr_status_t sqrl_req_parse(apr_pool_t * pool, sqrl_req_rec ** sqrl_req,
+                            sqrl_svr_cfg * sconf, const apr_table_t * body)
 {
     sqrl_req_rec *req = apr_palloc(pool, sizeof(sqrl_req_rec));
     sqrl_rec *sqrl;
@@ -530,4 +532,3 @@ const char *sqrl_req_to_string(apr_pool_t * pool, const sqrl_req_rec * req)
                         str_or_null(req->raw_ids),
                         hex_or_null(pool, req->ids, SQRL_SIGN_BYTES));
 }
-

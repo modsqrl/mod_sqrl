@@ -17,16 +17,14 @@ limitations under the License.
 #include "apr_pools.h"
 #include "sodium/utils.h"
 
-char *sqrl_base64_encode(apr_pool_t * p, const unsigned char * plain,
+char *sqrl_base64_encode(apr_pool_t * p, const unsigned char *plain,
                          size_t plain_len)
 {
     char *b64, *b;
     size_t i = plain_len / 3U, r = plain_len % 3U;
-    static char alpha[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-                          "abcdefghijklmnopqrstuvwxyz"
-                          "0123456789-_";        // +/
+    static char alpha[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ" "abcdefghijklmnopqrstuvwxyz" "0123456789-_";     // +/
 
-    b64 = b = (char*)apr_palloc(p, 4U * i + 1U);
+    b64 = b = (char *) apr_palloc(p, 4U * i + 1U);
 
     while (i-- > 0) {
         *b++ = alpha[plain[0] >> 2];
@@ -69,7 +67,7 @@ unsigned char *sqrl_base64_decode(apr_pool_t * p, const char *b64,
         *plain_len = 0;
     }
 
-    str = s = (unsigned char*)apr_palloc(p, b64_len);
+    str = s = (unsigned char *) apr_palloc(p, b64_len);
 
     while (b64_len-- > 0) {
         *s++ = (*b64++) - 45;
@@ -121,7 +119,7 @@ char *bin2hex(apr_pool_t * p, const unsigned char *bin,
               const size_t binlen, size_t * hexlen)
 {
     size_t hexlen0 = binlen * 2U;
-    char *hex = (char*)apr_palloc(p, hexlen0 + 1U);
+    char *hex = (char *) apr_palloc(p, hexlen0 + 1U);
 
     if (hexlen != NULL) {
         *hexlen = hexlen0;
@@ -146,4 +144,3 @@ void int32_to_bytes(unsigned char bytes[4], apr_int32_t integer)
     *(bytes + 2) = integer >> 8 & 0xff;
     *(bytes + 3) = integer >> 0 & 0xff;
 }
-

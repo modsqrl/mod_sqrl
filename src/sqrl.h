@@ -114,13 +114,16 @@ typedef struct
 } sqrl_req_rec;
 
 
-unsigned char *get_ip_hash(apr_pool_t *p, const char *ip, const char *nonce);
+unsigned char *get_ip_hash(apr_pool_t * p, const char *ip, const char *nonce);
 
-sqrl_rec *sqrl_create(apr_pool_t *pool, sqrl_svr_cfg *sconf, sqrl_dir_cfg *dconf, char *ip);
+sqrl_rec *sqrl_create(apr_pool_t * pool, sqrl_svr_cfg * sconf,
+                      sqrl_dir_cfg * dconf, char *ip);
 
-apr_status_t sqrl_parse(apr_pool_t *pool, sqrl_rec ** sqrl, sqrl_svr_cfg *sconf, const char *sqrl_uri);
+apr_status_t sqrl_parse(apr_pool_t * pool, sqrl_rec ** sqrl,
+                        sqrl_svr_cfg * sconf, const char *sqrl_uri);
 
-apr_status_t sqrl_req_parse(apr_pool_t *pool, sqrl_req_rec ** sqrl_req, sqrl_svr_cfg *sconf, const apr_table_t *body);
+apr_status_t sqrl_req_parse(apr_pool_t * pool, sqrl_req_rec ** sqrl_req,
+                            sqrl_svr_cfg * sconf, const apr_table_t * body);
 
 int sqrl_verify(apr_pool_t * pool, const sqrl_req_rec * sqrl_req);
 

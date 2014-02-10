@@ -130,7 +130,7 @@ static int authenticate_sqrl(request_rec * r)
     sqrl = sqrl_req->sqrl;
 
     /* Verify the timeout */
-    if(dconf->timeout > 0) {
+    if (dconf->timeout > 0) {
         time_now = apr_time_sec(apr_time_now());
         if (time_now > (sqrl->nut->timestamp + dconf->timeout)) {
             ap_log_rerror(APLOG_MARK, LOG_WARNING, SQRL_EXPIRED_NUT, r,
