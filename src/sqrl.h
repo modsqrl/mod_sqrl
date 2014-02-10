@@ -18,6 +18,7 @@ limitations under the License.
 #define SQRL_H
 
 
+#include "apr_pools.h"
 #include "apr_tables.h"
 #include "sodium/crypto_hash.h"
 #include "sodium/crypto_sign_ed25519.h"
@@ -113,6 +114,8 @@ typedef struct
 } sqrl_req_rec;
 
 
+unsigned char *get_ip_hash(apr_pool_t *p, const char *ip, const char *nonce);
+
 sqrl_rec *sqrl_create(apr_pool_t *pool, sqrl_svr_cfg *sconf, sqrl_dir_cfg *dconf, char *ip);
 
 apr_status_t sqrl_parse(apr_pool_t *pool, sqrl_rec ** sqrl, sqrl_svr_cfg *sconf, const char *sqrl_uri);
@@ -120,6 +123,21 @@ apr_status_t sqrl_parse(apr_pool_t *pool, sqrl_rec ** sqrl, sqrl_svr_cfg *sconf,
 apr_status_t sqrl_req_parse(apr_pool_t *pool, sqrl_req_rec ** sqrl_req, sqrl_svr_cfg *sconf, const apr_table_t *body);
 
 int sqrl_verify(apr_pool_t * pool, const sqrl_req_rec * sqrl_req);
+
+const char *sqrl_nut_to_string(apr_pool_t * pool, const sqrl_nut_rec * nut);
+
+/*
+ * Create a string representation of a sqrl_rec.
+ * @param pool Allocate the new string.
+ * @param sqrl sqrl_rec to stringify.
+ * @return String of the sqrl_rec.
+ */
+const char *sqrl_to_string(apr_pool_t * pool, const sqrl_rec * sqrl);
+
+const char *sqrl_client_to_string(apr_pool_t * pool,
+                                  const sqrl_client_rec * args);
+
+const char *sqrl_req_to_string(apr_pool_t * pool, const sqrl_req_rec * req);
 
 
 #endif

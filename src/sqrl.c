@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#include "ctype.h"
 #include "string.h"
 
 #include "apr_hash.h"
@@ -31,8 +32,106 @@ limitations under the License.
 
 #include "sqrl.h"
 #include "sqrl_encodings.h"
-#include "utils.h"
 
+
+/*
+ * Remove whitespace from the beginning and end of a string. The only change
+ * to the supplied string is the resetting of the terminating '\0'.
+ * @param str String to trim.
+ * @return Pointer to the first non-whitespace character in the string.
+ */
+char *trim(char *str)
+{
+    register char *s = str;
+
+    if (str == NULL) {
+        return NULL;
+    }
+
+    /* Scan over the leading whitespace */
+    while (isspace(*s)) {
+        ++s;
+    }
+    str = s;
+
+    /* Scan to the end */
+    while (*s != '\0') {
+        ++s;
+    }
+
+    /* Scan over the trailing whitespace */
+    while (isspace(*(s - 1))) {
+        --s;
+    }
+    *s = '\0';
+
+    return str;
+}
+
+/*
+ * Parse name/value pairs into a table. There must be one pair per line and
+ * pairs must be formated as name=value.
+ * @param p Memory pool to allocate the table.
+ * @param params Parameters to parse.
+ * @return Table of parameters.
+ */
+apr_table_t *parse_parameters(apr_pool_t * p, char *params)
+{
+    char *param, *value, *last;
+    apr_array_header_t *param_array;
+    apr_table_t *param_table;
+
+    /* Parse each line into an array */
+    param_array = apr_array_make(p, 3, sizeof(char *));
+    for (param = apr_strtok(params, "\r\n", &last);
+         param != NULL; param = apr_strtok(NULL, "\r\n", &last)) {
+        APR_ARRAY_PUSH(param_array, char *) = param;
+    }
+
+    /* Parse each name=value into a table */
+    param_table = apr_table_make(p, param_array->nelts);
+    while (param_array->nelts > 0) {
+        param = *(char **) apr_array_pop(param_array);
+        /* Get the parameter name */
+        param = trim(apr_strtok(param, "=", &last));
+        /* Skip it if it's empty */
+        if (*param == '\0') {
+            continue;
+        }
+        /* Get the parameter value */
+        value = trim(apr_strtok(NULL, "\0", &last));
+        /* If only the name was given, value will be null */
+        if (value == NULL) {
+            apr_table_setn(param_table, param, "");
+        }
+        else {
+            apr_table_setn(param_table, param, value);
+        }
+    }
+
+    return param_table;
+}
+
+unsigned char *get_ip_hash(apr_pool_t *p, const char *ip, const char *nonce)
+{
+    size_t ip_len, nonce_len;
+    unsigned char *ip_buff, *ip_hash;
+
+    ip_len = strlen(ip);
+    nonce_len = strlen(nonce);
+
+    ip_buff = apr_palloc(p, ip_len + nonce_len);
+    /* Add the IP */
+    memcpy(ip_buff, ip, ip_len);
+    /* Add the nonce */
+    memcpy((ip_buff + ip_len), nonce, nonce_len);
+
+    /* Hash the salted IP and add to the nut struct */
+    ip_hash = apr_palloc(p, SQRL_HASH_BYTES);
+    sqrl_hash(ip_hash, ip_buff, (ip_len + nonce_len));
+
+    return ip_hash;
+}
 
 sqrl_rec *sqrl_create(apr_pool_t *pool, sqrl_svr_cfg *sconf, sqrl_dir_cfg *dconf, char *ip)
 {
@@ -342,5 +441,93 @@ apr_status_t sqrl_req_parse(apr_pool_t *pool, sqrl_req_rec ** sqrl_req, sqrl_svr
     return APR_SUCCESS;
 }
 
+#define str_or_null(str) (str ? str : "null")
+#define hex_or_null(pool, data, sz) \
+    (data ? bin2hex(pool, data, sz, NULL) : "null")
 
+static const char *ck_null(const char *val)
+{
+    if (val) {
+        return val;
+    }
+    else {
+        return "null";
+    }
+}
+
+const char *sqrl_nut_to_string(apr_pool_t * pool, const sqrl_nut_rec * nut)
+{
+    char *timestamp;
+
+    if (nut->timestamp) {
+        timestamp = apr_palloc(pool, APR_RFC822_DATE_LEN);
+        apr_rfc822_date(timestamp, apr_time_from_sec(nut->timestamp));
+    }
+    else {
+        timestamp = "null";
+    }
+
+    return apr_psprintf(pool,
+                        "sqrl_nut_rec{timestamp=%s,counter=%d,"
+                        "nonce=%s,ip_hash=%s}",
+                        timestamp, (nut->counter ? nut->counter : 0),
+                        hex_or_null(pool, nut->nonce, 4U),
+                        hex_or_null(pool, nut->ip_hash, 4U));
+}
+
+const char *sqrl_to_string(apr_pool_t * pool, const sqrl_rec * sqrl)
+{
+    const char *nut;
+
+    if (sqrl->nut) {
+        nut = sqrl_nut_to_string(pool, sqrl->nut);
+    }
+    else {
+        nut = "null";
+    }
+
+    return apr_psprintf(pool,
+                        "sqrl_rec{uri=%s,nut=%s,nut64=%s,nonce=%s}",
+                        ck_null(sqrl->uri), nut,
+                        str_or_null(sqrl->nut64), ck_null(sqrl->nonce));
+}
+
+const char *sqrl_client_to_string(apr_pool_t * pool,
+                                  const sqrl_client_rec * args)
+{
+    return apr_psprintf(pool,
+                        "sqrl_client_rec{version=%s,key=%s}",
+                        ck_null(args->version),
+                        hex_or_null(pool, args->idk, SQRL_PUBLIC_KEY_BYTES));
+}
+
+const char *sqrl_req_to_string(apr_pool_t * pool, const sqrl_req_rec * req)
+{
+    const char *client, *sqrl;
+
+    if (req->client) {
+        client = sqrl_client_to_string(pool, req->client);
+    }
+    else {
+        client = "null";
+    }
+    if (req->sqrl) {
+        sqrl = sqrl_to_string(pool, req->sqrl);
+    }
+    else {
+        sqrl = "null";
+    }
+
+    return apr_psprintf(pool,
+                        "sqrl_req_rec{raw_client=%s,client=%s,"
+                        "raw_server=%s,server=%s,sqrl=%s,"
+                        "raw_ids=%s,ids=%s}",
+                        str_or_null(req->raw_client),
+                        client,
+                        str_or_null(req->raw_server),
+                        str_or_null(req->server),
+                        sqrl,
+                        str_or_null(req->raw_ids),
+                        hex_or_null(pool, req->ids, SQRL_SIGN_BYTES));
+}
 

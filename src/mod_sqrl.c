@@ -39,7 +39,6 @@ limitations under the License.
 
 #include "sqrl.h"
 #include "sqrl_encodings.h"
-#include "utils.h"
 
 
 module AP_MODULE_DECLARE_DATA sqrl_module;
