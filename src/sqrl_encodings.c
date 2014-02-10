@@ -14,17 +14,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#include "apr_pools.h"
-#include "sodium/utils.h"
+#include <math.h>
+#include <apr_pools.h>
+#include <sodium/utils.h>
 
-char *sqrl_base64_encode(apr_pool_t * p, const unsigned char *plain,
+char *sqrl_base64_encode(apr_pool_t * pool, const unsigned char *plain,
                          size_t plain_len)
 {
     char *b64, *b;
     size_t i = plain_len / 3U, r = plain_len % 3U;
-    static char alpha[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ" "abcdefghijklmnopqrstuvwxyz" "0123456789-_";     // +/
+    static const char alpha[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";     // +/
 
-    b64 = b = (char *) apr_palloc(p, 4U * i + 1U);
+    b64 = b = (char *) apr_palloc(pool, 4U * i + 1U);
 
     while (i-- > 0) {
         *b++ = alpha[plain[0] >> 2];
@@ -50,69 +51,72 @@ char *sqrl_base64_encode(apr_pool_t * p, const unsigned char *plain,
     return b64;
 }
 
-unsigned char *sqrl_base64_decode(apr_pool_t * p, const char *b64,
+/*
+ * Modified version of:
+ * http://en.wikibooks.org/wiki/Algorithm_Implementation/Miscellaneous/Base64#C_2
+ */
+unsigned char *sqrl_base64_decode(apr_pool_t * pool, const char *b64,
                                   size_t * plain_len)
 {
-    unsigned char *str, *s, *sb;
-    size_t b64_len = strlen(b64), i = b64_len / 4U, r = b64_len % 4U;
-    static const char nib[] = { 62, -1, -1, 52, 53, 54, 55, 56, 57, 58, 59,
-        60, 61, -1, -1, -1, -1, -1, -1, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
-        11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, -1, -1,
-        -1, -1, 63, -1, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38,
-        39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51
+    static const unsigned char d[] = {
+        66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66,
+            66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66,
+            66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 62, 66, 66, 52,
+            53, 54, 55, 56, 57, 58, 59, 60, 61, 66, 66, 66, 65, 66, 66, 66, 0,
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+            20, 21, 22, 23, 24, 25, 66, 66, 66, 66, 63, 66, 26, 27, 28, 29,
+            30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
+            46, 47, 48, 49, 50, 51, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66,
+            66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66,
+            66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66,
+            66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66,
+            66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66,
+            66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66,
+            66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66,
+            66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66,
+            66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66
     };
-    static const char niblen = sizeof(nib);
+    size_t buf = 1, len = strlen(b64);
+    const char *end = b64 + len;
+    unsigned char *plain =
+        (unsigned char *) apr_palloc(pool, (int) ceil((len / 4) * 3));
+
+    len = 0;
+    while (b64 < end) {
+        unsigned char c = d[(int) (*b64++)];
+
+        switch (c) {
+        case 66:
+            return NULL;        /* invalid input, return error */
+        case 65:               /* pad character, end of data */
+            b64 = end;
+            continue;
+        default:
+            buf = buf << 6 | c;
+            if (buf & 0x1000000) {
+                len += 3;
+                *plain++ = buf >> 16;
+                *plain++ = buf >> 8;
+                *plain++ = buf;
+                buf = 1;
+            }
+        }
+    }
+
+    if (buf & 0x40000) {
+        len += 2;
+        *plain++ = buf >> 10;
+        *plain++ = buf >> 2;
+    }
+    else if (buf & 0x1000) {
+        ++len;
+        *plain++ = buf >> 4;
+    }
 
     if (plain_len) {
-        *plain_len = 0;
+        *plain_len = len;
     }
-
-    str = s = (unsigned char *) apr_palloc(p, b64_len);
-
-    while (b64_len-- > 0) {
-        *s++ = (*b64++) - 45;
-    }
-
-#define invalid(i) (sb[i] < 0 || sb[i] > niblen)
-#define get(i) nib[sb[i]]
-
-    s = sb = str;
-    while (i-- > 0) {
-        if (invalid(0) || invalid(1) || invalid(2) || invalid(3)) {
-            return NULL;
-        }
-        *s++ = (get(0) << 2) | (get(1) >> 4);
-        *s++ = (get(1) << 4) | (get(2) >> 2);
-        *s++ = ((get(2) << 6) & 0xc0) | get(3);
-        sb += 4;
-    }
-    switch (r) {
-    case 1:
-        return NULL;
-        break;
-    case 2:
-        if (invalid(0) || invalid(1)) {
-            return NULL;
-        }
-        *s++ = (get(0) << 2) | (get(1) >> 4);
-        *s++ = (get(1) << 4);
-        break;
-    case 3:
-        if (invalid(0) || invalid(1) || invalid(2)) {
-            return NULL;
-        }
-        *s++ = (get(0) << 2) | (get(1) >> 4);
-        *s++ = (get(1) << 4) | (get(2) >> 2);
-        *s++ = ((get(2) << 6) & 0xc0);
-        break;
-    }
-    *s = '\0';
-
-    if (plain_len) {
-        *plain_len = s - str - 1;
-    }
-
-    return str;
+    return plain - len;
 }
 
 char *bin2hex(apr_pool_t * p, const unsigned char *bin,

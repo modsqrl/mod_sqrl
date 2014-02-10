@@ -48,6 +48,8 @@ TestData::TestData(const char *str, const char *b64) : str(str), b64(b64) {
 TEST_CASE("Base64", "[encoding]") {
     size_t chk_len;
     apr_pool_t *p;
+    char *encoded, *hex;
+    unsigned char *decoded, *bin;
     std::vector<TestData> v;
 
     v.push_back(TestData("a", "YQ"));
@@ -64,10 +66,32 @@ TEST_CASE("Base64", "[encoding]") {
 
     for(unsigned i = 0 ; i < v.size() ; ++i) {
         INFO("str = " << v[i].str << " ; b64 = " << v[i].b64);
-        CHECK_STR(v[i].b64, encode_str(p, v[i].str));
-        CHECK_STR(v[i].str, (char*)sqrl_base64_decode(p, v[i].b64, &chk_len));
+        encoded = encode_str(p, v[i].str);
+        REQUIRE(encoded != NULL);
+        CAPTURE(encoded);
+        CHECK_STR(v[i].b64, encoded);
+        decoded = sqrl_base64_decode(p, v[i].b64, &chk_len);
+        REQUIRE(decoded != NULL);
+        CAPTURE((char*)decoded);
+        CHECK_STR(v[i].str, (char*)decoded);
         CHECK(chk_len == v[i].str_len);
     }
+
+    bin = (unsigned char*)apr_palloc(p, 255);
+    for(unsigned char i = 0 ; i < 255 ; ++i) {
+        bin[i] = i;
+    }
+    hex = bin2hex(p, bin, 255, NULL);
+    CAPTURE(hex);
+    encoded = sqrl_base64_encode(p, bin, 255);
+    REQUIRE(encoded != NULL);
+    CAPTURE(encoded);
+    CHECK_STR("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn-AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq-wsbKztLW2t7i5uru8vb6_wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t_g4eLj5OXm5-jp6uvs7e7v8PHy8_T19vf4-fr7_P3-", encoded);
+    decoded = sqrl_base64_decode(p, encoded, &chk_len);
+    REQUIRE(decoded != NULL);
+    CHECK(chk_len == 255);
+    CAPTURE(bin2hex(p, decoded, chk_len, NULL));
+    CHECK(memcmp(bin, decoded, chk_len) == 0);
 
     apr_pool_destroy(p);
     apr_pool_terminate();

@@ -22,23 +22,23 @@ limitations under the License.
 /*
  * Encode binary data to URL-safe base64.
  * http://tools.ietf.org/html/rfc4648
- * @param p Memory pool to allocate the returned encoded string.
+ * @param pool Memory pool to allocate the returned encoded string.
  * @param plain Binary data to encode. '\0' does not terminate the data.
  * @param plain_len Number of bytes in plain to encode.
  * @return Base64url encoded string. Terminated by '\0'.
  */
-char *sqrl_base64_encode(apr_pool_t * p, const unsigned char *plain,
+char *sqrl_base64_encode(apr_pool_t * pool, const unsigned char *plain,
                          size_t plain_len);
 
 /*
  * Decode binary data from a URL-safe base64 string.
  * http://tools.ietf.org/html/rfc4648
- * @param p Allocates the decoded data.
+ * @param pool Allocates the decoded data.
  * @param b64 Base64 string to decode. '\0' terminated.
  * @param plain_len Number of bytes decoded. May be NULL.
  * @return The decoded plain data. '\0' does not terminate the data.
  */
-unsigned char *sqrl_base64_decode(apr_pool_t * p, const char *b64,
+unsigned char *sqrl_base64_decode(apr_pool_t * pool, const char *b64,
                                   size_t * plain_len);
 
 /*
