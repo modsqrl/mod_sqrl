@@ -94,8 +94,12 @@ static int authenticate_sqrl(request_rec * r)
 
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, OK, r, "Verifying SQRL code ...");
 
-    sconf = ap_get_module_config(r->server->module_config, &sqrl_module);
-    dconf = ap_get_module_config(r->per_dir_config, &sqrl_module);
+    sconf =
+        (sqrl_svr_cfg *) ap_get_module_config(r->server->module_config,
+                                              &sqrl_module);
+    dconf =
+        (sqrl_dir_cfg *) ap_get_module_config(r->per_dir_config,
+                                              &sqrl_module);
 
     /* Initiate libapreq */
     apreq = apreq_handle_apache2(r);
@@ -154,7 +158,7 @@ static int authenticate_sqrl(request_rec * r)
 
 static int sign_sqrl(request_rec * r)
 {
-    unsigned char *private, *public, *signature;
+    unsigned char *private_key, *public_key, *signature;
     char *public_hex, *private_hex, *signature_hex, *public64, *signature64;
     char *url, *end, *pipe;
     apr_size_t url_len;
@@ -191,23 +195,24 @@ static int sign_sqrl(request_rec * r)
     }
 
     /* Generate the public key */
-    public = apr_palloc(r->pool, SQRL_PUBLIC_KEY_BYTES);
-    private = apr_palloc(r->pool, SQRL_PRIVATE_KEY_BYTES);
-    rv = sqrl_crypto_sign_keypair(public, private);
+    public_key = (unsigned char *) apr_palloc(r->pool, SQRL_PUBLIC_KEY_BYTES);
+    private_key =
+        (unsigned char *) apr_palloc(r->pool, SQRL_PRIVATE_KEY_BYTES);
+    rv = sqrl_crypto_sign_keypair(public_key, private_key);
     if (rv) {
         ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r,
                       "Error generating the public key");
         return HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    public_hex = bin2hex(r->pool, public, SQRL_PUBLIC_KEY_BYTES, NULL);
-    private_hex = bin2hex(r->pool, private, SQRL_PRIVATE_KEY_BYTES, NULL);
+    public_hex = bin2hex(r->pool, public_key, SQRL_PUBLIC_KEY_BYTES, NULL);
+    private_hex = bin2hex(r->pool, private_key, SQRL_PRIVATE_KEY_BYTES, NULL);
     ap_log_rerror(APLOG_MARK, LOG_DEBUG, 0, r,
                   "public key = %s ; private key = %s", public_hex,
                   private_hex);
 
     /* Encode the public key in base64 */
-    public64 = sqrl_base64_encode(r->pool, public, SQRL_PUBLIC_KEY_BYTES);
+    public64 = sqrl_base64_encode(r->pool, public_key, SQRL_PUBLIC_KEY_BYTES);
 
     /* Complete the URL */
     url =
@@ -215,9 +220,10 @@ static int sign_sqrl(request_rec * r)
                     public64, NULL);
 
     /* Sign the URL */
-    signature = apr_palloc(r->pool, SQRL_SIGN_BYTES + strlen(url));
+    signature =
+        (unsigned char *) apr_palloc(r->pool, SQRL_SIGN_BYTES + strlen(url));
     rv = sqrl_crypto_sign(signature, &signature_len, (unsigned char *) url,
-                          strlen(url), private);
+                          strlen(url), private_key);
     if (rv) {
         ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r, "Error signing the URL");
         return HTTP_INTERNAL_SERVER_ERROR;
@@ -280,8 +286,12 @@ static APR_OPTIONAL_FN_TYPE(ap_ssi_get_tag_and_value) *
         mr = mr->main;
     }
 
-    sconf = ap_get_module_config(r->server->module_config, &sqrl_module);
-    dconf = ap_get_module_config(r->per_dir_config, &sqrl_module);
+    sconf =
+        (sqrl_svr_cfg *) ap_get_module_config(r->server->module_config,
+                                              &sqrl_module);
+    dconf =
+        (sqrl_dir_cfg *) ap_get_module_config(r->per_dir_config,
+                                              &sqrl_module);
 
     /* Loop over directive arguments */
     while (1) {
@@ -341,7 +351,8 @@ static int sqrl_post_config(apr_pool_t * p, apr_pool_t * plog,
     int rv;
 
     /* Load the server config to validate settings */
-    sconf = ap_get_module_config(s->module_config, &sqrl_module);
+    sconf =
+        (sqrl_svr_cfg *) ap_get_module_config(s->module_config, &sqrl_module);
 
     /* If a domain isn't configured, set it to this server's domain */
     if (sconf->domain == UNSET) {
@@ -350,7 +361,7 @@ static int sqrl_post_config(apr_pool_t * p, apr_pool_t * plog,
 
     /* If a nut_key isn't configured, generate a random one */
     if (sconf->nut_key == (unsigned char *) UNSET) {
-        nut_key = apr_palloc(p, SQRL_ENCRYPTION_KEY_BYTES);
+        nut_key = (unsigned char *) apr_palloc(p, SQRL_ENCRYPTION_KEY_BYTES);
         randombytes(nut_key, SQRL_ENCRYPTION_KEY_BYTES);
         sconf->nut_key = nut_key;
     }
@@ -382,8 +393,8 @@ static int sqrl_post_config(apr_pool_t * p, apr_pool_t * plog,
 
 static void *create_server_config(apr_pool_t * p, server_rec * s)
 {
-    sqrl_svr_cfg *conf = apr_palloc(p, sizeof(sqrl_svr_cfg));
-    unsigned char *counter_bytes = apr_palloc(p, 4);
+    sqrl_svr_cfg *conf = (sqrl_svr_cfg *) apr_palloc(p, sizeof(sqrl_svr_cfg));
+    unsigned char *counter_bytes = (unsigned char *) apr_palloc(p, 4);
 
     conf->scheme = "qrl";
     conf->domain = UNSET;       /* Default is set in post_config() */
@@ -395,7 +406,7 @@ static void *create_server_config(apr_pool_t * p, server_rec * s)
 
 static void *create_dir_config(apr_pool_t * p, char *dir)
 {
-    sqrl_dir_cfg *conf = apr_palloc(p, sizeof(sqrl_dir_cfg));
+    sqrl_dir_cfg *conf = (sqrl_dir_cfg *) apr_palloc(p, sizeof(sqrl_dir_cfg));
     conf->realm = UNSET;
     conf->path = "sqrl";
     conf->timeout = 120;        /* 2 minutes */
@@ -405,7 +416,8 @@ static void *create_dir_config(apr_pool_t * p, char *dir)
 static const char *cfg_set_tls(cmd_parms * parms, void *mconfig, int on)
 {
     server_rec *s = parms->server;
-    sqrl_svr_cfg *conf = ap_get_module_config(s->module_config, &sqrl_module);
+    sqrl_svr_cfg *conf =
+        (sqrl_svr_cfg *) ap_get_module_config(s->module_config, &sqrl_module);
     conf->scheme = (on ? "sqrl" : "qrl");
     return NULL;
 }
@@ -414,7 +426,8 @@ static const char *cfg_set_domain(cmd_parms * parms, void *mconfig,
                                   const char *w)
 {
     server_rec *s = parms->server;
-    sqrl_svr_cfg *conf = ap_get_module_config(s->module_config, &sqrl_module);
+    sqrl_svr_cfg *conf =
+        (sqrl_svr_cfg *) ap_get_module_config(s->module_config, &sqrl_module);
     conf->domain = w;
     return NULL;
 }
@@ -429,9 +442,10 @@ static const char *cfg_set_key(cmd_parms * parms, void *mconfig,
                                const char *w)
 {
     server_rec *s = parms->server;
-    sqrl_svr_cfg *conf = ap_get_module_config(s->module_config, &sqrl_module);
+    sqrl_svr_cfg *conf =
+        (sqrl_svr_cfg *) ap_get_module_config(s->module_config, &sqrl_module);
     unsigned char *nut_key =
-        apr_palloc(parms->pool, SQRL_ENCRYPTION_KEY_BYTES);
+        (unsigned char *) apr_palloc(parms->pool, SQRL_ENCRYPTION_KEY_BYTES);
     char hex[70];
     char *c;
     unsigned short i;

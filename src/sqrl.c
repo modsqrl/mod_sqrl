@@ -120,14 +120,14 @@ unsigned char *get_ip_hash(apr_pool_t * p, const char *ip, const char *nonce)
     ip_len = strlen(ip);
     nonce_len = strlen(nonce);
 
-    ip_buff = apr_palloc(p, ip_len + nonce_len);
+    ip_buff = (unsigned char *) apr_palloc(p, ip_len + nonce_len);
     /* Add the IP */
     memcpy(ip_buff, ip, ip_len);
     /* Add the nonce */
     memcpy((ip_buff + ip_len), nonce, nonce_len);
 
     /* Hash the salted IP and add to the nut struct */
-    ip_hash = apr_palloc(p, SQRL_HASH_BYTES);
+    ip_hash = (unsigned char *) apr_palloc(p, SQRL_HASH_BYTES);
     sqrl_hash(ip_hash, ip_buff, (ip_len + nonce_len));
 
     return ip_hash;
@@ -157,10 +157,10 @@ sqrl_rec *sqrl_create(apr_pool_t * pool, sqrl_svr_cfg * sconf,
        NULL)); */
 
     /* Allocate the sqrl struct */
-    sqrl = apr_palloc(pool, sizeof(sqrl_rec));
+    sqrl = (sqrl_rec *) apr_palloc(pool, sizeof(sqrl_rec));
 
     /* Generate a nonce */
-    nonce_bytes = apr_palloc(pool, SQRL_NONCE_BYTES);
+    nonce_bytes = (unsigned char *) apr_palloc(pool, SQRL_NONCE_BYTES);
     /* libsodium PRNG */
     randombytes(nonce_bytes, SQRL_NONCE_BYTES);
 
@@ -171,10 +171,10 @@ sqrl_rec *sqrl_create(apr_pool_t * pool, sqrl_svr_cfg * sconf,
     ++sconf->counter;           /* TODO increment_and_get() */
 
     /* Build the nut struct */
-    nut = apr_palloc(pool, sizeof(sqrl_nut_rec));
+    nut = (sqrl_nut_rec *) apr_palloc(pool, sizeof(sqrl_nut_rec));
     nut->timestamp = apr_time_sec(apr_time_now());
     nut->counter = sconf->counter;
-    nut->nonce = apr_palloc(pool, 4);
+    nut->nonce = (unsigned char *) apr_palloc(pool, 4);
     randombytes(nut->nonce, 4);
     nut->ip_hash = get_ip_hash(pool, ip, sqrl->nonce);
 
@@ -182,7 +182,7 @@ sqrl_rec *sqrl_create(apr_pool_t * pool, sqrl_svr_cfg * sconf,
     sqrl->nut = nut;
 
     /* Build the authentication URL's nut */
-    nut_buff = apr_palloc(pool, 16);
+    nut_buff = (unsigned char *) apr_palloc(pool, 16);
     /* Add the current time */
     int32_to_bytes(nut_buff, nut->timestamp);
     /* Add the counter */
@@ -193,7 +193,7 @@ sqrl_rec *sqrl_create(apr_pool_t * pool, sqrl_svr_cfg * sconf,
     memcpy((nut_buff + 12), nut->ip_hash, 4);
 
     /* Encrypt the nut */
-    nut_crypt = apr_palloc(pool, 16U);
+    nut_crypt = (unsigned char *) apr_palloc(pool, 16U);
     sqrl_crypto_stream(nut_crypt, nut_buff, 16U, nonce_bytes, sconf->nut_key);
 
     /* Encode the nut as base64 */
@@ -222,8 +222,8 @@ int sqrl_verify(apr_pool_t * pool, const sqrl_req_rec * sqrl_req)
     size_t server_len = strlen(sqrl_req->raw_server);
     unsigned long long sig_len = SQRL_SIGN_BYTES + client_len + server_len;
     unsigned long long msg_len;
-    unsigned char *sig = apr_palloc(pool, sig_len);
-    unsigned char *msg = apr_palloc(pool, sig_len);
+    unsigned char *sig = (unsigned char *) apr_palloc(pool, sig_len);
+    unsigned char *msg = (unsigned char *) apr_palloc(pool, sig_len);
 
     /* Build signature */
     memcpy(sig, sqrl_req->ids, SQRL_SIGN_BYTES);
@@ -239,13 +239,14 @@ int sqrl_verify(apr_pool_t * pool, const sqrl_req_rec * sqrl_req)
 static sqrl_nut_rec *sqrl_nut_parse(apr_pool_t * pool,
                                     const unsigned char *nut_bytes)
 {
-    sqrl_nut_rec *sqrl_nut = apr_palloc(pool, sizeof(sqrl_nut_rec));
+    sqrl_nut_rec *sqrl_nut =
+        (sqrl_nut_rec *) apr_palloc(pool, sizeof(sqrl_nut_rec));
 
     sqrl_nut->timestamp = bytes_to_int32(nut_bytes);
     sqrl_nut->counter = bytes_to_int32(nut_bytes + 4);
-    sqrl_nut->nonce = apr_palloc(pool, 4);
+    sqrl_nut->nonce = (unsigned char *) apr_palloc(pool, 4);
     memcpy(sqrl_nut->nonce, (nut_bytes + 8), 4);
-    sqrl_nut->ip_hash = apr_palloc(pool, 4);
+    sqrl_nut->ip_hash = (unsigned char *) apr_palloc(pool, 4);
     memcpy(sqrl_nut->ip_hash, (nut_bytes + 12), 4);
 
     return sqrl_nut;
@@ -254,9 +255,9 @@ static sqrl_nut_rec *sqrl_nut_parse(apr_pool_t * pool,
 apr_status_t sqrl_parse(apr_pool_t * pool, sqrl_rec ** sqrl,
                         sqrl_svr_cfg * sconf, const char *sqrl_uri)
 {
-    sqrl_rec *sq = apr_palloc(pool, sizeof(sqrl_rec));
+    sqrl_rec *sq = (sqrl_rec *) apr_palloc(pool, sizeof(sqrl_rec));
     apr_table_t *server_params;
-    char *uri;
+    const char *uri;
     unsigned char *nonce, *nut_bytes, *nut_crypt;
     size_t dec_len;
     apr_status_t rv;
@@ -300,7 +301,7 @@ apr_status_t sqrl_parse(apr_pool_t * pool, sqrl_rec ** sqrl,
     }
 
     /* Decrypt the nut */
-    nut_crypt = apr_palloc(pool, 16);
+    nut_crypt = (unsigned char *) apr_palloc(pool, 16);
     sqrl_crypto_stream(nut_crypt, nut_bytes, 16U, nonce, sconf->nut_key);
 
     /* Parse the nut */
@@ -319,7 +320,8 @@ apr_status_t sqrl_client_parse(apr_pool_t * pool,
                                sqrl_client_rec ** sqrl_client,
                                const char *raw_client)
 {
-    sqrl_client_rec *args = apr_palloc(pool, sizeof(sqrl_client_rec));
+    sqrl_client_rec *args =
+        (sqrl_client_rec *) apr_palloc(pool, sizeof(sqrl_client_rec));
     char *client;
     apr_table_t *client_params;
     const char *version, *key64;
@@ -365,7 +367,8 @@ apr_status_t sqrl_client_parse(apr_pool_t * pool,
 apr_status_t sqrl_req_parse(apr_pool_t * pool, sqrl_req_rec ** sqrl_req,
                             sqrl_svr_cfg * sconf, const apr_table_t * body)
 {
-    sqrl_req_rec *req = apr_palloc(pool, sizeof(sqrl_req_rec));
+    sqrl_req_rec *req =
+        (sqrl_req_rec *) apr_palloc(pool, sizeof(sqrl_req_rec));
     sqrl_rec *sqrl;
     sqrl_client_rec *client;
     char *server;
@@ -462,11 +465,11 @@ const char *sqrl_nut_to_string(apr_pool_t * pool, const sqrl_nut_rec * nut)
     char *timestamp;
 
     if (nut->timestamp) {
-        timestamp = apr_palloc(pool, APR_RFC822_DATE_LEN);
+        timestamp = (char *) apr_palloc(pool, APR_RFC822_DATE_LEN);
         apr_rfc822_date(timestamp, apr_time_from_sec(nut->timestamp));
     }
     else {
-        timestamp = "null";
+        timestamp = (char *) "null";
     }
 
     return apr_psprintf(pool,
