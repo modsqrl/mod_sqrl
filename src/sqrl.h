@@ -49,15 +49,15 @@ limitations under the License.
 #define SQRL_PRIVATE_KEY_BYTES crypto_sign_ed25519_SECRETKEYBYTES
 #define SQRL_HASH_BYTES crypto_hash_BYTES
 
-#define sqrl_crypto_stream(c, m, mlen, n, k)\
+#define sqrl_crypto_stream_impl(c, m, mlen, n, k)\
         crypto_stream_aes256estream_xor(c, m, mlen, n, k)
-#define sqrl_crypto_sign_keypair(pk, sk)\
+#define sqrl_crypto_sign_keypair_impl(pk, sk)\
         crypto_sign_ed25519_keypair(pk, sk)
-#define sqrl_crypto_sign(sm, smlen, m, mlen, sk)\
+#define sqrl_crypto_sign_impl(sm, smlen, m, mlen, sk)\
         crypto_sign_ed25519(sm, smlen, m, mlen, sk)
-#define sqrl_crypto_sign_open(m, mlen, sm, smlen, pk)\
+#define sqrl_crypto_sign_open_impl(m, mlen, sm, smlen, pk)\
         crypto_sign_ed25519_open(m, mlen, sm, smlen, pk)
-#define sqrl_hash(out, in, inlen)\
+#define sqrl_hash_impl(out, in, inlen)\
         crypto_hash(out, in, inlen)
 
 typedef struct

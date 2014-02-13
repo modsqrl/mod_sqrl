@@ -128,7 +128,7 @@ unsigned char *get_ip_hash(apr_pool_t * p, const char *ip, const char *nonce)
 
     /* Hash the salted IP and add to the nut struct */
     ip_hash = (unsigned char *) apr_palloc(p, SQRL_HASH_BYTES);
-    sqrl_hash(ip_hash, ip_buff, (ip_len + nonce_len));
+    sqrl_hash_impl(ip_hash, ip_buff, (ip_len + nonce_len));
 
     return ip_hash;
 }
@@ -194,7 +194,8 @@ sqrl_rec *sqrl_create(apr_pool_t * pool, sqrl_svr_cfg * sconf,
 
     /* Encrypt the nut */
     nut_crypt = (unsigned char *) apr_palloc(pool, 16U);
-    sqrl_crypto_stream(nut_crypt, nut_buff, 16U, nonce_bytes, sconf->nut_key);
+    sqrl_crypto_stream_impl(nut_crypt, nut_buff, 16U, nonce_bytes,
+                            sconf->nut_key);
 
     /* Encode the nut as base64 */
     sqrl->nut64 = sqrl_base64_encode(pool, nut_crypt, 16U);
@@ -232,8 +233,8 @@ int sqrl_verify(apr_pool_t * pool, const sqrl_req_rec * sqrl_req)
            server_len);
 
     /* Verify signature */
-    return sqrl_crypto_sign_open(msg, &msg_len, sig, sig_len,
-                                 sqrl_req->client->idk);
+    return sqrl_crypto_sign_open_impl(msg, &msg_len, sig, sig_len,
+                                      sqrl_req->client->idk);
 }
 
 static sqrl_nut_rec *sqrl_nut_parse(apr_pool_t * pool,
@@ -302,7 +303,7 @@ apr_status_t sqrl_parse(apr_pool_t * pool, sqrl_rec ** sqrl,
 
     /* Decrypt the nut */
     nut_crypt = (unsigned char *) apr_palloc(pool, 16);
-    sqrl_crypto_stream(nut_crypt, nut_bytes, 16U, nonce, sconf->nut_key);
+    sqrl_crypto_stream_impl(nut_crypt, nut_bytes, 16U, nonce, sconf->nut_key);
 
     /* Parse the nut */
     sq->nut = sqrl_nut_parse(pool, nut_crypt);

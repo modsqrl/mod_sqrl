@@ -198,7 +198,7 @@ static int sign_sqrl(request_rec * r)
     public_key = (unsigned char *) apr_palloc(r->pool, SQRL_PUBLIC_KEY_BYTES);
     private_key =
         (unsigned char *) apr_palloc(r->pool, SQRL_PRIVATE_KEY_BYTES);
-    rv = sqrl_crypto_sign_keypair(public_key, private_key);
+    rv = sqrl_crypto_sign_keypair_impl(public_key, private_key);
     if (rv) {
         ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r,
                       "Error generating the public key");
@@ -222,8 +222,9 @@ static int sign_sqrl(request_rec * r)
     /* Sign the URL */
     signature =
         (unsigned char *) apr_palloc(r->pool, SQRL_SIGN_BYTES + strlen(url));
-    rv = sqrl_crypto_sign(signature, &signature_len, (unsigned char *) url,
-                          strlen(url), private_key);
+    rv = sqrl_crypto_sign_impl(signature, &signature_len,
+                               (unsigned char *) url, strlen(url),
+                               private_key);
     if (rv) {
         ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r, "Error signing the URL");
         return HTTP_INTERNAL_SERVER_ERROR;
