@@ -118,6 +118,16 @@ ones are complete.
 &#x2714; Validate signature  
 &#x2714; Validate nut info  
 &#x2714; Configuration directives  
+&#x26aa; Autotools  
+&#x26aa; Testing framework  
+
+---
+Steve Gibson has been making changes to the spec as he codes his client. I
+suspect he will do the same thing while coding his server so this project's
+focus will be on the build environment and testing framework until Steve gets
+to his server implementation.
+
+---
 &#x26aa; Success and Fail responses  
 &#x26aa; Store authenticated SQRL session  
 &#x26aa; mod\_auth module for user session  
