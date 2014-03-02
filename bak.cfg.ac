@@ -1,0 +1,46 @@
+AC_PREREQ([2.68])
+AC_INIT([mod_sqrl], [1.0], [https://github.com/modsqrl/mod_sqrl/issues], [mod_sqrl], [https://github.com/modsqrl/mod_sqrl])
+AC_CONFIG_AUX_DIR([build-aux])
+AC_CONFIG_MACRO_DIR([m4])
+AM_INIT_AUTOMAKE([foreign -Wall -Werror])
+LT_INIT(disable-static)
+AC_CONFIG_SRCDIR([src/main/c/mod_sqrl.c])
+AC_CONFIG_HEADERS([config.h])
+
+AC_PROG_CXX
+AC_PROG_AWK
+AC_PROG_CC
+AC_PROG_CPP
+AC_PROG_INSTALL
+AC_PROG_LN_S
+AC_PROG_MAKE_SET
+AC_PROG_RANLIB
+
+AC_HEADER_STDC
+AC_CHECK_HEADERS([stdlib.h])
+
+# AC_CHECK_LIB([apr-1], [apr_initialize], [:], [
+#   AC_MSG_ERROR([libapr-1 is required])
+# ])
+AC_SEARCH_LIBS([apr_initialize], [apr-1])
+# AC_CHECK_HEADERS([apr.h], [:], [
+#   AC_MSG_ERROR([libapr-1 is required])
+# ])
+
+AC_CHECK_LIB([aprutil-1], [apu_version_string], [:], [
+  AC_MSG_ERROR([libaprutil-1 is required])
+])
+AC_CHECK_LIB([apreq2], [apreq_pre_initialize], [:], [
+  AC_MSG_ERROR([libapreq2 is required])
+])
+AC_CHECK_LIB([sodium], [sodium_init], [:], [
+  AC_MSG_ERROR([libsodium is required])
+])
+AC_CHECK_LIB([check], [suite_create])
+
+AC_TYPE_SIZE_T
+AC_FUNC_MALLOC
+AC_CHECK_FUNCS([strchr strstr])
+
+AC_CONFIG_FILES([Makefile src/main/c/Makefile src/test/c/Makefile])
+AC_OUTPUT
