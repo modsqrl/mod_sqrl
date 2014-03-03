@@ -20,7 +20,7 @@ limitations under the License.
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include "../src/sqrl_encodings.c"
+#include "../../main/c/sqrl_encodings.c"
 #ifdef __cplusplus
 }
 #endif
