@@ -120,6 +120,7 @@ ones are complete.
 &#x2714; Configuration directives  
 &#x26aa; Autotools  
 &#x26aa; Testing framework  
+&#x26aa; Gettext  
 
 ---
 Steve Gibson has been making changes to the spec as he codes his client. I
