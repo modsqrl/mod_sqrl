@@ -40,17 +40,11 @@ CHECK_APXS([:], [AC_MSG_ERROR([apxs is required])])
 CHECK_HTTPD_VERSION([20051115.0], [:],
                     [AC_MSG_ERROR([httpd needs to be at least v2.2])])
 
-#AC_CHECK_LIB([apr-1], [apr_initialize])
-#AC_CHECK_LIB([aprutil-1], [apu_version_string])
-#AC_CHECK_LIB([apreq2], [apreq_initialize])
 AC_CHECK_LIB([sodium], [sodium_init])
-AC_CHECK_LIB([check], [suite_create])
+PKG_CHECK_MODULES([CHECK], [check >= 0.8.2])
 
 # Checks for header files.
-#AC_CHECK_HEADER([apr-1/apr.h])
-#AC_CHECK_HEADER([apreq2/apreq.h])
 AC_CHECK_HEADER([sodium.h])
-AC_CHECK_HEADER([check.h])
 
 # Checks for typedefs, structures, and compiler characteristics.
 AC_TYPE_SIZE_T
