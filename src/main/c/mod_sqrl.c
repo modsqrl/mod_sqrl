@@ -75,6 +75,7 @@ static int authenticate_sqrl(request_rec * r)
 {
     sqrl_svr_cfg *sconf;
     sqrl_dir_cfg *dconf;
+    apreq_handle_t* (*sqrl_apreq_handle_apache2)(request_rec *r);
     sqrl_req_rec *sqrl_req;
     const sqrl_rec *sqrl;
     apr_status_t rv;
@@ -102,7 +103,8 @@ static int authenticate_sqrl(request_rec * r)
                                               &sqrl_module);
 
     /* Initiate libapreq */
-    apreq = apreq_handle_apache2(r);
+    sqrl_apreq_handle_apache2 = APR_RETRIEVE_OPTIONAL_FN(apreq_handle_apache2);
+    apreq = sqrl_apreq_handle_apache2(r);
 
     /* Parse the body parameters */
     rv = apreq_body(apreq, &body);
@@ -366,6 +368,8 @@ static int sqrl_post_config(apr_pool_t * p, apr_pool_t * plog,
         randombytes(nut_key, SQRL_ENCRYPTION_KEY_BYTES);
         sconf->nut_key = nut_key;
     }
+
+    /* apreq_handle_apache2 */
 
     /* Retrieve mod_include's optional functions */
     APR_OPTIONAL_FN_TYPE(ap_register_include_handler) * sqrl_reg_ssi =
