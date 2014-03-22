@@ -28,9 +28,9 @@ AC_ARG_ENABLE(verbose-output,
 
 # Checks for programs.
 AC_PROG_CC
-AM_PROG_CC_C_O
-AC_PROG_RANLIB
+AC_PROG_CXX
 AC_PROG_GREP
+AM_PROG_CC_C_O
 
 # Checks for libraries.
 CHECK_APR([:], [AC_MSG_ERROR([apr library is required])])
@@ -41,7 +41,8 @@ CHECK_HTTPD_VERSION([20051115.0], [:],
                     [AC_MSG_ERROR([httpd needs to be at least v2.2])])
 
 AC_CHECK_LIB([sodium], [sodium_init])
-PKG_CHECK_MODULES([CHECK], [check >= 0.8.2])
+PKG_CHECK_MODULES([CHECK], [check >= 0.8.2], [:],
+                  [Unit tests cannot be run without check])
 
 # Checks for header files.
 AC_CHECK_HEADER([sodium.h])
