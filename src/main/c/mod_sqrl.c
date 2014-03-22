@@ -104,6 +104,12 @@ static int authenticate_sqrl(request_rec * r)
 
     /* Initiate libapreq */
     sqrl_apreq_handle_apache2 = APR_RETRIEVE_OPTIONAL_FN(apreq_handle_apache2);
+    if (sqrl_apreq_handle_apache2 == NULL) {
+        ap_log_rerror(APLOG_MARK, LOG_EMERG, 0, r,
+                      "apreq_module has not been loaded. This module is "
+                      "required for sqrl_module to work.");
+        return HTTP_INTERNAL_SERVER_ERROR;
+    }
     apreq = sqrl_apreq_handle_apache2(r);
 
     /* Parse the body parameters */
