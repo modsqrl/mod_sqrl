@@ -16,14 +16,7 @@ limitations under the License.
 
 /*#include <string.h>*/
 #include <check.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-#include "../../main/c/sqrl_encodings.c"
-#ifdef __cplusplus
-}
-#endif
+#include <sqrl_encodings.h>
 
 
 #define _ck_assert_uint(X, O, Y) ck_assert_msg((X) O (Y), "Assertion '"#X#O#Y"' failed: "#X"==%u, "#Y"==%u", X, Y)

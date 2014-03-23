@@ -4,7 +4,7 @@
 AC_PREREQ([2.63])
 AC_INIT([mod_sqrl], [0.1], [https://github.com/modsqrl/mod_sqrl/issues])
 AC_CONFIG_MACRO_DIR([m4])
-AC_CONFIG_SRCDIR([src/main/c/mod_sqrl.c])
+AC_CONFIG_SRCDIR([LICENSE])
 AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_AUX_DIR([build-aux])
 
@@ -42,7 +42,7 @@ CHECK_HTTPD_VERSION([20051115.0], [:],
 
 AC_CHECK_LIB([sodium], [sodium_init])
 PKG_CHECK_MODULES([CHECK], [check >= 0.8.2], [:],
-                  [Unit tests cannot be run without check])
+                  [AC_MSG_NOTICE([Unit tests cannot be run without check])])
 
 # Checks for header files.
 AC_CHECK_HEADER([sodium.h])
@@ -58,8 +58,9 @@ AC_CHECK_FUNCS([strchr strstr])
 AC_SUBST(ac_aux_dir)
 
 AC_CONFIG_FILES([Makefile
-                 src/main/c/Makefile
-                 src/test/c/Makefile])
+                 libsqrl/Makefile
+                 apache2/Makefile
+                 test/Makefile])
 
 AC_OUTPUT
 
