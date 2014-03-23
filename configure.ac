@@ -58,9 +58,8 @@ AC_CHECK_FUNCS([strchr strstr])
 AC_SUBST(ac_aux_dir)
 
 AC_CONFIG_FILES([Makefile
-                 libsqrl/Makefile
-                 apache2/Makefile
-                 test/Makefile])
+                 libsqrl/Makefile libsqrl/src/Makefile libsqrl/test/Makefile
+                 apache2/Makefile apache2/src/Makefile])
 
 AC_OUTPUT
 

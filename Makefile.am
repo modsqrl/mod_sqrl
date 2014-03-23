@@ -1,5 +1,5 @@
 ACLOCAL_AMFLAGS = -I m4
-SUBDIRS = libsqrl apache2 test
+SUBDIRS = libsqrl apache2
 
 MAINTAINERCLEANFILES = Makefile.in aclocal.m4 autoscan.log config.h.in* \
                        configure configure.scan m4/libtool.m4 m4/lt*
