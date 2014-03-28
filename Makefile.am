@@ -7,3 +7,12 @@ MAINTAINERCLEANFILES = Makefile.in aclocal.m4 autoscan.log config.h.in* \
 maintainer-clean-local:
 	-rm -rf $(ac_aux_dir)
 
+start:
+	$(APXS_HTTPD) -k start
+
+stop:
+	$(APXS_HTTPD) -k stop
+
+restart:
+	$(APXS_HTTPD) -k restart
+
