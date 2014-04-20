@@ -1,14 +1,23 @@
 #                                               -*- Autoconf -*-
 # Process this file with autoconf to produce a configure script.
 
+# Initialize Autoconf
 AC_PREREQ([2.63])
 AC_INIT([mod_sqrl], [0.1], [https://github.com/modsqrl/mod_sqrl/issues])
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_SRCDIR([LICENSE])
 AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_AUX_DIR([build-aux])
+AC_PROG_CC
+AC_PROG_CXX
+AC_PROG_GREP
 
+# Initialize Automake
 AM_INIT_AUTOMAKE([foreign -Wall -Werror])
+AM_PROG_CC_C_O
+AM_PROG_AR
+
+# Initialize Libtool
 LT_PREREQ([2.2])
 LT_INIT
 
@@ -25,12 +34,6 @@ AC_ARG_ENABLE(verbose-output,
 [
   verbose_output=0
 ])
-
-# Checks for programs.
-AC_PROG_CC
-AC_PROG_CXX
-AC_PROG_GREP
-AM_PROG_CC_C_O
 
 # Checks for libraries.
 CHECK_APR([:], [AC_MSG_ERROR([apr library is required])])
