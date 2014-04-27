@@ -35,6 +35,23 @@ AC_ARG_ENABLE(verbose-output,
   verbose_output=0
 ])
 
+# Enable debugging features?
+AC_ARG_ENABLE(dev-mode,
+              AS_HELP_STRING([--enable-dev-mode],
+                             [Enable debugging features.]),
+[
+  case "${enableval}" in
+  no) dev_mode=false ;;
+  *) dev_mode=true ;;
+  esac
+],
+[
+  dev_mode=false
+])
+if test $dev_mode = true ; then
+  CFLAGS="$CFLAGS -Wall -g -O0 -pg"
+fi
+
 # Checks for libraries.
 CHECK_APR([:], [AC_MSG_ERROR([apr library is required])])
 CHECK_APU([:], [AC_MSG_ERROR([apu library is required])])
