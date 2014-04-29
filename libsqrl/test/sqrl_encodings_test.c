@@ -14,14 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-/*#include <string.h>*/
 #include <check.h>
 #include <sqrl_encodings.h>
 
-
-#define _ck_assert_uint(X, O, Y) ck_assert_msg((X) O (Y), "Assertion '"#X#O#Y"' failed: "#X"==%u, "#Y"==%u", X, Y)
-
-#define ck_assert_uint_eq(X, Y) _ck_assert_uint(X, ==, Y)
 
 #define encode_str(pool, str) \
     sqrl_base64_encode(pool, (const unsigned char*)str, strlen(str))
@@ -32,9 +27,9 @@ typedef struct {
 } test_data;
 
 
-apr_pool_t *p;
-size_t datalen = 8;
-test_data data[] = {
+static apr_pool_t *p;
+static size_t datalen = 8;
+static test_data data[] = {
     {"",""},
     {"a","YQ"},
     {"ab","YWI"},
@@ -45,12 +40,12 @@ test_data data[] = {
     {"abcdefghijklmnopqrstuvwxyz","YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo"}
 };
 
-void setup()
+static void setup()
 {
     apr_pool_create_unmanaged(&p);
 }
 
-void teardown()
+static void teardown()
 {
     apr_pool_destroy(p);
 }
@@ -91,7 +86,7 @@ START_TEST(All255)
     ck_assert_str_eq(encoded, "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn-AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq-wsbKztLW2t7i5uru8vb6_wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t_g4eLj5OXm5-jp6uvs7e7v8PHy8_T19vf4-fr7_P3-");
     decoded = sqrl_base64_decode(p, encoded, &chk_len);
     ck_assert(decoded != NULL);
-    ck_assert_uint_eq(chk_len, 255);
+    ck_assert_uint_eq(chk_len, 255U);
     if(memcmp(bin, decoded, chk_len) != 0) {
         bin_hex = bin2hex(p, bin, 255, NULL);
         dec_hex = bin2hex(p, decoded, chk_len, NULL);
@@ -112,25 +107,5 @@ Suite *base64_suite()
     suite_add_tcase(s, tc_core);
 
     return s;
-}
-
-
-int main()
-{
-    int number_failed;
-    Suite *s;
-    SRunner *sr;
-
-    s = base64_suite();
-    sr = srunner_create(s);
-    apr_pool_initialize();
-
-    srunner_run_all(sr, CK_NORMAL);
-    number_failed = srunner_ntests_failed(sr);
-
-    srunner_free(sr);
-    apr_pool_terminate();
-
-    return number_failed;
 }
 
