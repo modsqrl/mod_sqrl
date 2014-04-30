@@ -29,7 +29,6 @@ int main()
 
     sr = srunner_create(base64_suite());
     srunner_add_suite(sr, sqrl_suite());
-    srunner_set_xml(sr, "test.xml");
 
     srunner_run_all(sr, CK_VERBOSE);
     number_failed = srunner_ntests_failed(sr);

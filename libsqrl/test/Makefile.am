@@ -1,3 +1,5 @@
+LOG_DRIVER = $(top_srcdir)/check-driver.sh
+
 TESTS = test
 check_PROGRAMS = test
 test_SOURCES = sqrl_encodings_test.c \
@@ -11,5 +13,6 @@ test_LDADD = ../src/libsqrl.la \
              @APR_LDADD@ @APU_LDADD@ \
              @CHECK_LIBS@
 
+CLEANFILES = gmon.out test.xml
 MAINTAINERCLEANFILES = Makefile.in
 
